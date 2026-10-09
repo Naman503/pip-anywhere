@@ -54,7 +54,13 @@ final class CursorBridge {
         let front = NSWorkspace.shared.frontmostApplication
         if front?.processIdentifier != targetPID { previousApp = front }
         isCaptured = true
-        warp(to: CGPoint(x: window.minX + local.x, y: window.minY + local.y))
+        let target = CGPoint(x: window.minX + local.x, y: window.minY + local.y)
+        // Start from a plain arrow (never carry a resize arrow into the app) and make
+        // the app active, so its very first click counts and it shows its own cursors.
+        NSCursor.arrow.set()
+        activateTarget()
+        warp(to: target)
+        log("live: cursor handed to the app at \(Int(target.x)),\(Int(target.y))")
         onCursor(local)
         onCaptureChange(true)
     }
@@ -100,12 +106,21 @@ final class CursorBridge {
     }
 
     private func finishExit(at point: CGPoint) {
+        log("live: cursor back on the panel at \(Int(point.x)),\(Int(point.y))")
         isCaptured = false
         lastExit = Date()
         warp(to: point)
         onCursor(nil)
         onCaptureChange(false)
         if returnFocusOnExit { handFocusBack() }
+    }
+
+    private func activateTarget() {
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID else { return }
+        let element = AXUIElementCreateApplication(targetPID)
+        if AXUIElementSetAttributeValue(element, kAXFrontmostAttribute as CFString, kCFBooleanTrue) != .success {
+            NSRunningApplication(processIdentifier: targetPID)?.activate()
+        }
     }
 
     /// Give the keyboard back to the app the user was in before pointing at the panel.

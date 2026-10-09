@@ -288,6 +288,9 @@ final class LiveController {
             }
         case "unfloat":
             Task { await unfloat() }
+        case "size":
+            let n = (argument ?? "").split(separator: ",").compactMap { Double($0) }
+            if n.count == 2 { panel.setLiveSurfaceSize(CGSize(width: n[0], height: n[1])) }
         case "release":
             bridge.release()
         case "fps":

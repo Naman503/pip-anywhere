@@ -96,6 +96,20 @@ final class GeometryTests: XCTestCase {
         XCTAssertEqual(PanelGeometry.sized(f, width: 10, aspect: 16 / 9, in: screen).width, PanelGeometry.minWidth)
     }
 
+    func testHandleZones() {
+        let size = CGSize(width: 400, height: 300)
+        func h(_ x: CGFloat, _ y: CGFloat) -> ResizeHandle? { PanelGeometry.handle(at: CGPoint(x: x, y: y), in: size, edge: 6, corner: 16) }
+        XCTAssertNil(h(200, 150))              // inside: normal arrow
+        XCTAssertNil(h(30, 30))                // near a corner but not in it
+        XCTAssertEqual(h(3, 150), .left)
+        XCTAssertEqual(h(397, 150), .right)
+        XCTAssertEqual(h(200, 2), .top)
+        XCTAssertEqual(h(200, 298), .bottom)
+        XCTAssertEqual(h(5, 5), [.top, .left])
+        XCTAssertEqual(h(395, 295), [.bottom, .right])
+        XCTAssertNil(h(-1, 150))               // outside
+    }
+
     func testFreeResize() {
         let start = CGRect(x: 100, y: 100, width: 800, height: 500)
         let min = CGSize(width: 300, height: 200), max = CGSize(width: 1600, height: 1000)

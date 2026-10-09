@@ -149,6 +149,26 @@ public enum PanelGeometry {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
+    /// Which resize zone a point is in (view coordinates, origin top-left), or nil for
+    /// the inside of the window. Corners are `corner`×`corner` squares; edges are
+    /// `edge`-thick strips. One source of truth for both the cursor and the drag zones.
+    public static func handle(at p: CGPoint, in size: CGSize, edge: CGFloat, corner: CGFloat) -> ResizeHandle? {
+        guard p.x >= 0, p.y >= 0, p.x <= size.width, p.y <= size.height else { return nil }
+        var h: ResizeHandle = []
+        let nearLeft = p.x < corner, nearRight = p.x > size.width - corner
+        let nearTop = p.y < corner, nearBottom = p.y > size.height - corner
+        if (nearLeft || nearRight) && (nearTop || nearBottom) {
+            h.insert(nearLeft ? .left : .right)
+            h.insert(nearTop ? .top : .bottom)
+            return h
+        }
+        if p.x < edge { return .left }
+        if p.x > size.width - edge { return .right }
+        if p.y < edge { return .top }
+        if p.y > size.height - edge { return .bottom }
+        return nil
+    }
+
     /// Free-shape resize (live apps): each dragged edge follows the mouse, the opposite
     /// edge stays put, within `minSize`...`maxSize`.
     public static func resizedFree(_ start: CGRect, handle: ResizeHandle, delta: CGVector, minSize: CGSize, maxSize: CGSize) -> CGRect {

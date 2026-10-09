@@ -39,6 +39,7 @@ while (Date.now() < end) {
       focused: document.hasFocus(),
       field: document.getElementById('field').value,
       scrollTop: document.getElementById('list').scrollTop,
+      size: `${innerWidth}x${innerHeight}`,
       events: window.__log.slice(-6),
     }));
     console.log(JSON.stringify({ t: Math.round((end - Date.now()) / 1000), ...s }));
