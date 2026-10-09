@@ -12,12 +12,17 @@ struct PanelActions {
     var toggleStash: () -> Void
     var toggleZoom: () -> Void
     var close: () -> Void
+    /// Live apps: pointer entered the live surface at a surface-local point.
+    var liveHover: (CGPoint) -> Void = { _ in }
+    /// Live apps: put the window back on the desktop and stop floating it.
+    var liveReturn: () -> Void = {}
 }
 
-/// Video + hover controls + stash handle.
+/// Video + hover controls + stash handle, or a live app.
 struct PlayerView: View {
     @ObservedObject var model: PlayerModel
     let videoLayer: CALayer
+    let liveLayer: CALayer
     let actions: PanelActions
 
     @State private var scrubTime: Double?
@@ -27,6 +32,14 @@ struct PlayerView: View {
     }
 
     var body: some View {
+        if let live = model.live {
+            LiveView(model: model, live: live, layer: liveLayer, actions: actions)
+        } else {
+            videoBody
+        }
+    }
+
+    private var videoBody: some View {
         ZStack {
             Color.black
             // Slid into the edge: the visible strip must not reveal the video.
@@ -264,9 +277,8 @@ private struct SpeedMenu: View {
 private struct ResizeHandles: View {
     let onChange: (ResizeHandle) -> Void
     let onEnd: () -> Void
-
-    private let edge: CGFloat = 8
-    private let corner: CGFloat = 18
+    var edge: CGFloat = 8
+    var corner: CGFloat = 18
 
     var body: some View {
         GeometryReader { geo in
@@ -321,6 +333,100 @@ private struct ResizeHandles: View {
         if handle == .left || handle == .right { return .resizeLeftRight }
         if handle == .top || handle == .bottom { return .resizeUpDown }
         return .crosshair
+    }
+}
+
+/// A live app: slim title bar (drag to move) above the app's live surface.
+struct LiveView: View {
+    static let barHeight: CGFloat = 26
+
+    @ObservedObject var model: PlayerModel
+    let live: LiveInfo
+    let layer: CALayer
+    let actions: PanelActions
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                bar
+                ZStack(alignment: .topLeading) {
+                    VideoSurface(videoLayer: layer, blurred: model.isStashed)
+                    if model.isStashed { Color.black.opacity(0.35) }
+                    if let notice = live.notice {
+                        Text(notice)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(.black.opacity(0.7), in: Capsule())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    if let p = model.liveCursor, !model.isStashed {
+                        LiveCursor(point: p)
+                    }
+                    // Hover here hands the real cursor over to the app on the stage.
+                    if !model.isStashed && !model.ghost {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                if case let .active(location) = phase { actions.liveHover(location) }
+                            }
+                    }
+                }
+            }
+            if model.isStashed {
+                StashHandle(edge: model.stashEdge, playing: true)
+                    .contentShape(Rectangle())
+                    .onTapGesture { actions.toggleStash() }
+            } else if !model.ghost {
+                ResizeHandles(onChange: actions.resizeChanged, onEnd: actions.resizeEnded, edge: 4, corner: 12)
+            }
+        }
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: model.isStashed ? 8 : 10, style: .continuous))
+    }
+
+    private var bar: some View {
+        HStack(spacing: 6) {
+            if let icon = live.icon {
+                Image(nsImage: icon).resizable().frame(width: 15, height: 15)
+            }
+            Text(live.title.isEmpty ? live.appName : "\(live.appName) — \(live.title)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
+            if model.liveCaptured {
+                Circle().fill(Color.green).frame(width: 6, height: 6).help("You're controlling this app")
+            }
+            Spacer(minLength: 4)
+            IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥P)", action: actions.toggleStash)
+            IconButton(symbol: "rectangle.portrait.and.arrow.right", size: 11, help: "Put the window back on the desktop", action: actions.liveReturn)
+            IconButton(symbol: "xmark", size: 11, help: "Close", action: actions.close)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: Self.barHeight)
+        .frame(maxWidth: .infinity)
+        .background(Color(white: 0.13))
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                .onChanged { _ in actions.dragChanged() }
+                .onEnded { _ in actions.dragEnded() }
+        )
+        .onTapGesture(count: 2) { actions.toggleZoom() }
+    }
+}
+
+/// Draws the system's current cursor (arrow, I-beam, hand…) where the real cursor is on the stage.
+private struct LiveCursor: View {
+    let point: CGPoint
+
+    var body: some View {
+        let cursor = NSCursor.currentSystem ?? NSCursor.arrow
+        let image = cursor.image
+        Image(nsImage: image)
+            .frame(width: image.size.width, height: image.size.height)
+            .offset(x: point.x - cursor.hotSpot.x, y: point.y - cursor.hotSpot.y)
+            .allowsHitTesting(false)
     }
 }
 

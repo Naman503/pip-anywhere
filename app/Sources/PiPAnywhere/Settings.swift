@@ -83,6 +83,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "pauseWhenStashed") }
     }
 
+    /// Size of the last live app surface (restored next time).
+    static var liveSurfaceSize: CGSize? {
+        get { defaults.string(forKey: "liveSurfaceSize").map(NSSizeFromString).flatMap { $0.width > 0 ? $0 : nil } }
+        set { defaults.set(newValue.map(NSStringFromSize), forKey: "liveSurfaceSize") }
+    }
+
     static var savedFrame: NSRect? {
         get { defaults.string(forKey: "frame").map(NSRectFromString).flatMap { $0.width > 0 ? $0 : nil } }
         set { defaults.set(newValue.map(NSStringFromRect), forKey: "frame") }

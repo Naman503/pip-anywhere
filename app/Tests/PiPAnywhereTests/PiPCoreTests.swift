@@ -96,6 +96,19 @@ final class GeometryTests: XCTestCase {
         XCTAssertEqual(PanelGeometry.sized(f, width: 10, aspect: 16 / 9, in: screen).width, PanelGeometry.minWidth)
     }
 
+    func testFreeResize() {
+        let start = CGRect(x: 100, y: 100, width: 800, height: 500)
+        let min = CGSize(width: 300, height: 200), max = CGSize(width: 1600, height: 1000)
+        // Bottom-left corner: right and top edges stay put, shape changes freely.
+        let f = PanelGeometry.resizedFree(start, handle: [.bottom, .left], delta: CGVector(dx: -100, dy: -50), minSize: min, maxSize: max)
+        XCTAssertEqual(f, CGRect(x: 0, y: 50, width: 900, height: 550))
+        let tiny = PanelGeometry.resizedFree(start, handle: [.top, .right], delta: CGVector(dx: -5000, dy: -5000), minSize: min, maxSize: max)
+        XCTAssertEqual(tiny.size, min)
+        XCTAssertEqual(tiny.origin, start.origin)
+        let huge = PanelGeometry.resizedFree(start, handle: .right, delta: CGVector(dx: 5000, dy: 0), minSize: min, maxSize: max)
+        XCTAssertEqual(huge.width, 1600)
+    }
+
     func testResizeLimits() {
         let start = CGRect(x: 100, y: 100, width: 320, height: 180)
         let tiny = PanelGeometry.resized(start, handle: .right, delta: CGVector(dx: -1000, dy: 0), aspect: 16 / 9, maxSize: screen.size)

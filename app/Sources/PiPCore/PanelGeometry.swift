@@ -149,6 +149,17 @@ public enum PanelGeometry {
         return CGRect(x: x, y: y, width: width, height: height)
     }
 
+    /// Free-shape resize (live apps): each dragged edge follows the mouse, the opposite
+    /// edge stays put, within `minSize`...`maxSize`.
+    public static func resizedFree(_ start: CGRect, handle: ResizeHandle, delta: CGVector, minSize: CGSize, maxSize: CGSize) -> CGRect {
+        var minX = start.minX, maxX = start.maxX, minY = start.minY, maxY = start.maxY
+        if handle.contains(.left) { minX = min(max(start.minX + delta.dx, start.maxX - maxSize.width), start.maxX - minSize.width) }
+        if handle.contains(.right) { maxX = max(min(start.maxX + delta.dx, start.minX + maxSize.width), start.minX + minSize.width) }
+        if handle.contains(.bottom) { minY = min(max(start.minY + delta.dy, start.maxY - maxSize.height), start.maxY - minSize.height) }
+        if handle.contains(.top) { maxY = max(min(start.maxY + delta.dy, start.minY + maxSize.height), start.minY + minSize.height) }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
     /// Re-shapes the frame to a new aspect ratio, keeping width and top-left corner.
     public static func fitted(_ frame: CGRect, aspect: CGFloat) -> CGRect {
         let height = frame.width / aspect

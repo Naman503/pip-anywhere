@@ -1,0 +1,39 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Live Apps test page</title>
+<style>
+  body { font: 15px system-ui; margin: 0; background: #1e2127; color: #e6e6e6; }
+  header { padding: 14px 18px; background: #16181d; display: flex; gap: 12px; align-items: center; }
+  input { font: inherit; padding: 6px 10px; width: 320px; }
+  canvas { display: block; margin: 12px 18px; border-radius: 8px; }
+  #stats { font: 13px ui-monospace, monospace; color: #98c379; }
+</style></head>
+<body>
+<header><input id="field" placeholder="type here"><button id="btn">Button</button><span id="stats"></span></header>
+<canvas id="c" width="600" height="300"></canvas>
+<div style="padding:0 18px">Scroll area:</div>
+<div id="list" style="height:200px; overflow:auto; margin:0 18px; background:#262a31">
+  <script>for (let i = 1; i <= 200; i++) document.write(`<div style="padding:4px 8px">row ${i}</div>`)</script>
+</div>
+<script>
+  // Everything the harness reads back.
+  window.__log = [];
+  window.__fps = 0;
+  const log = (e) => { window.__log.push(e); if (window.__log.length > 50) window.__log.shift(); };
+  addEventListener('click', (e) => log({ t: 'click', x: Math.round(e.clientX), y: Math.round(e.clientY), target: e.target.id || e.target.tagName, trusted: e.isTrusted }), true);
+  addEventListener('keydown', (e) => log({ t: 'key', key: e.key, trusted: e.isTrusted }), true);
+  addEventListener('wheel', (e) => log({ t: 'wheel', dy: Math.round(e.deltaY) }), { capture: true, passive: true });
+  document.addEventListener('visibilitychange', () => log({ t: 'visibility', state: document.visibilityState }));
+  const c = document.getElementById('c').getContext('2d');
+  let frames = 0, last = performance.now(), x = 0;
+  function frame(now) {
+    frames++;
+    if (now - last >= 1000) { window.__fps = Math.round(frames * 1000 / (now - last)); frames = 0; last = now;
+      document.getElementById('stats').textContent = `${window.__fps} fps · ${document.visibilityState}`; }
+    x = (x + 6) % 600;
+    c.fillStyle = '#1e2127'; c.fillRect(0, 0, 600, 300);
+    c.fillStyle = '#61afef'; c.fillRect(x, 0, 40, 300);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+</script>
+</body></html>

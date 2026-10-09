@@ -47,8 +47,15 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var restingFrame: NSRect?
     /// Frame to go back to after a double-click zoom.
     private var unzoomedFrame: NSRect?
+    /// Live apps are any shape; videos keep their aspect ratio.
+    private var freeShape = false
+    /// Frame the video window had before switching to a live app.
+    private var videoFrame: NSRect?
+    /// Live apps: called with the live surface's new size after a resize.
+    var onLiveResize: ((CGSize) -> Void)?
+    static let liveMinSize = CGSize(width: 320, height: 220)
 
-    init(model: PlayerModel, videoLayer: CALayer, actions: @escaping (PanelController) -> PanelActions) {
+    init(model: PlayerModel, videoLayer: CALayer, liveLayer: CALayer, actions: @escaping (PanelController) -> PanelActions) {
         self.model = model
         let fallback = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let frame = Settings.savedFrame.map { PanelGeometry.keptOnScreen($0, in: Self.screenFrame(containing: $0)) }
@@ -56,7 +63,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel = PiPPanel(contentRect: frame)
         super.init()
 
-        let hosting = PiPHostingView(rootView: PlayerView(model: model, videoLayer: videoLayer, actions: actions(self)))
+        let hosting = PiPHostingView(rootView: PlayerView(model: model, videoLayer: videoLayer, liveLayer: liveLayer, actions: actions(self)))
         hosting.sizingOptions = []
         hosting.onScroll = { [weak self] event in self?.scrolled(event) }
         panel.contentView = hosting
@@ -141,6 +148,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func magnifyChanged(_ scale: CGFloat) {
+        if freeShape { return } // a pinch over a live app belongs to the app
         if magnifyStart == nil {
             magnifyStart = panel.frame
             unzoomedFrame = nil
@@ -158,12 +166,56 @@ final class PanelController: NSObject, NSWindowDelegate {
         guard let start = resizeStart, !model.isStashed else { return }
         let mouse = NSEvent.mouseLocation
         let delta = CGVector(dx: mouse.x - start.mouse.x, dy: mouse.y - start.mouse.y)
-        panel.setFrame(PanelGeometry.resized(start.frame, handle: handle, delta: delta, aspect: aspect, maxSize: screenFrame.size), display: true)
+        let frame = freeShape
+            ? PanelGeometry.resizedFree(start.frame, handle: handle, delta: delta,
+                                        minSize: CGSize(width: Self.liveMinSize.width, height: Self.liveMinSize.height + LiveView.barHeight),
+                                        maxSize: screenFrame.size)
+            : PanelGeometry.resized(start.frame, handle: handle, delta: delta, aspect: aspect, maxSize: screenFrame.size)
+        panel.setFrame(frame, display: true)
     }
 
     func resizeEnded() {
         resizeStart = nil
         settle(animated: true)
+        if freeShape { onLiveResize?(liveSurfaceSize) }
+    }
+
+    // MARK: Live apps
+
+    /// Switches the window to a free-shape live app whose surface is `contentSize`.
+    func enterLiveMode(contentSize: CGSize) {
+        if !freeShape { videoFrame = panel.frame }
+        freeShape = true
+        panel.resizeIncrements = NSSize(width: 1, height: 1) // clears the aspect-ratio lock
+        setLiveSurfaceSize(contentSize)
+    }
+
+    func exitLiveMode() {
+        guard freeShape else { return }
+        freeShape = false
+        panel.contentAspectRatio = NSSize(width: aspect, height: 1)
+        if let videoFrame { panel.setFrame(videoFrame, display: true) }
+        videoFrame = nil
+    }
+
+    /// Resizes the window so the live surface is exactly `size` (keeps the top-left corner).
+    func setLiveSurfaceSize(_ size: CGSize) {
+        let frame = panel.frame
+        let height = size.height + LiveView.barHeight
+        let target = NSRect(x: frame.minX, y: frame.maxY - height, width: size.width, height: height)
+        panel.setFrame(PanelGeometry.keptOnScreen(target, in: screenFrame), display: true)
+    }
+
+    var liveSurfaceSize: CGSize {
+        CGSize(width: panel.frame.width, height: panel.frame.height - LiveView.barHeight)
+    }
+
+    /// The live surface in global top-left coordinates (what the cursor bridge maps from).
+    var liveSurfaceRect: CGRect {
+        let frame = panel.frame
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? frame.maxY
+        return CGRect(x: frame.minX, y: primaryTop - frame.maxY + LiveView.barHeight,
+                      width: frame.width, height: frame.height - LiveView.barHeight)
     }
 
     /// Grow (> 1) or shrink (< 1) around the centre, from the keyboard.
@@ -181,7 +233,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Double-click: switch between the current size and a large one (half the screen
     /// width), and back to exactly where it was.
     func toggleZoom() {
-        guard !model.isStashed else { return }
+        guard !model.isStashed, !freeShape else { return }
         if let previous = unzoomedFrame {
             unzoomedFrame = nil
             move(to: previous, animated: true)
@@ -279,7 +331,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private func scrolled(_ event: NSEvent) {
         // Momentum after lifting the fingers would overshoot.
-        guard Settings.scrollGestures, !model.isStashed, event.momentumPhase.isEmpty else { return }
+        guard Settings.scrollGestures, !model.isStashed, model.live == nil, event.momentumPhase.isEmpty else { return }
         // Physical finger/wheel direction, whatever the "natural scrolling" setting.
         let inverted = event.isDirectionInvertedFromDevice
         let dx = inverted ? event.scrollingDeltaX : -event.scrollingDeltaX // < 0: fingers moved left

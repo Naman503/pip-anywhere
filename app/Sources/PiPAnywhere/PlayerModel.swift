@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import PiPCore
 
@@ -15,6 +16,12 @@ final class PlayerModel: ObservableObject {
     @Published var hovering = false
     /// True while showing the built-in test pattern instead of a browser stream.
     @Published var testPattern = false
+    /// Set while the panel shows a live app instead of a browser video.
+    @Published var live: LiveInfo?
+    /// Overlay cursor position in the live surface (the real cursor is on the stage).
+    @Published var liveCursor: CGPoint?
+    @Published var liveCaptured = false
+
     /// Short feedback shown in the middle of the video ("Volume 40%", "+10 s").
     @Published private(set) var hud: String?
     private var hudTask: Task<Void, Never>?
@@ -96,6 +103,14 @@ final class PlayerModel: ObservableObject {
             setVolume(volume + Double(precise ? dy * 0.004 : dy * 0.05))
         }
     }
+}
+
+struct LiveInfo: Equatable {
+    var appName: String
+    var title: String
+    var icon: NSImage?
+    /// Shown instead of the app when something needs attention ("App closed", …).
+    var notice: String?
 }
 
 func formatTime(_ seconds: Double) -> String {

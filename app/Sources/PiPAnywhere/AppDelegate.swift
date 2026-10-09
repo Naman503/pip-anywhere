@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import PiPCore
 import ServiceManagement
 
@@ -35,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var hideTask: Task<Void, Never>?
     private var lastStatsLog = Date.distantPast
+    private var live: LiveController!
+    private var cancellables = Set<AnyCancellable>()
+    /// The app the user was in before opening our menu ("Float the app I'm in").
+    private var lastUserApp: NSRunningApplication?
 
     init(options: LaunchOptions) {
         self.options = options
@@ -43,7 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         SkyLight.allowCursorChangesInBackground()
-        panel = PanelController(model: model, videoLayer: renderer.layer) { [unowned self] controller in
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.processIdentifier != getpid() else { return }
+            MainActor.assumeIsolated { self?.lastUserApp = app }
+        }
+        let capture = StageCapture()
+        panel = PanelController(model: model, videoLayer: renderer.layer, liveLayer: capture.layer) { [unowned self] controller in
             PanelActions(
                 dragChanged: { controller.dragChanged() },
                 dragEnded: { controller.dragEnded() },
@@ -53,9 +64,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 resizeEnded: { controller.resizeEnded() },
                 toggleStash: { controller.toggleStash() },
                 toggleZoom: { controller.toggleZoom() },
-                close: { self.closeStream() }
+                close: { self.closeStream() },
+                liveHover: { self.live.bridge.enter(at: $0) },
+                liveReturn: { Task { await self.live.unfloat() } }
             )
         }
+        live = LiveController(model: model, panel: panel, capture: capture)
         model.sendCommand = { [unowned self] action, value in self.send(.command(action, value: value)) }
         setUpServer()
         setUpStatusItem()
@@ -157,6 +171,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func streamStarted(_ config: StreamConfig) {
         hideTask?.cancel()
+        // The window is showing a live app; the video keeps decoding but isn't shown.
+        if model.live != nil { return }
         if model.testPattern { stopTestPattern() }
         model.connected = true
         panel.setVideoSize(width: config.width, height: config.height)
@@ -178,7 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func closeStream() {
-        if model.testPattern {
+        if live.isFloating {
+            Task { await live.unfloat() }
+        } else if model.testPattern {
             stopTestPattern()
         } else {
             send(.command(.close))
@@ -235,6 +253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if let corner = ScreenCorner(rawValue: String(arg.dropFirst(7))) { panel.move(to: corner) }
             default: break
             }
+        } else if name == "live", let argument {
+            live.run(argument)
+        } else if name == "debug", let argument {
+            DebugInput.run(argument)
         } else if name == "snapshot", let path = argument {
             snapshot(to: path)
         } else if let action = CommandAction(rawValue: name) {
@@ -255,6 +277,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keys.register(.mute) { [unowned self] in model.toggleMute() }
         keys.register(.ghost) { [unowned self] in panel.toggleGhost() }
         keys.register(.backToTab) { [unowned self] in model.command(.focusTab) }
+        keys.register(.floatFrontmost) { [unowned self] in Task { await self.live.floatFrontmost() } }
+        keys.register(.releaseCursor) { [unowned self] in live.bridge.release() }
         keys.register(.grow) { [unowned self] in panel.scale(by: 1.15) }
         keys.register(.shrink) { [unowned self] in panel.scale(by: 1 / 1.15) }
     }
@@ -262,109 +286,124 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Menu bar
 
     private func setUpStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "pip", accessibilityDescription: "PiP Anywhere")
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        if options.port != WireProtocol.port {
+            // Copies started for testing must never be mistaken for the real app.
+            statusItem.button?.title = "TEST"
+            statusItem.button?.font = .systemFont(ofSize: 9, weight: .bold)
+            statusItem.button?.imagePosition = .imageLeading
+            statusItem.button?.toolTip = "PiP Anywhere — test copy (port \(options.port))"
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        updateStatusIcon()
+        // The icon shows the mode: idle, a video popped out, or an app floating.
+        Publishers.CombineLatest3(model.$connected, model.$testPattern, model.$live.map { $0 != nil })
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.updateStatusIcon() }
+            .store(in: &cancellables)
+    }
+
+    private func updateStatusIcon() {
+        let symbol: String
+        let description: String
+        if model.live != nil {
+            symbol = "macwindow.on.rectangle"
+            description = "PiP Anywhere — app floating"
+        } else if model.connected || model.testPattern {
+            symbol = "pip.fill"
+            description = "PiP Anywhere — video popped out"
+        } else {
+            symbol = "pip"
+            description = "PiP Anywhere"
+        }
+        statusItem.button?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-
-        let status: String
-        if model.testPattern {
-            status = "Showing test pattern"
-        } else if model.connected {
-            status = "Streaming: \(model.playback?.title ?? "video")"
-        } else {
-            status = "Waiting for the browser extension"
+        if options.port != WireProtocol.port {
+            menu.addItem(.disabled("Test copy · port \(options.port) · separate settings"))
+            menu.addItem(.separator())
         }
-        menu.addItem(.disabled(status))
-        if model.connected || model.testPattern { menu.addItem(.disabled(model.stats.summary)) }
-        menu.addItem(.separator())
 
-        if model.connected || model.testPattern {
-            menu.addItem(ClosureMenuItem(panel.isVisible ? "Hide window" : "Show window") { [unowned self] in
+        // ── Video picture-in-picture ──
+        menu.addItem(.sectionHeader(title: "Video picture-in-picture"))
+        if model.testPattern {
+            menu.addItem(.disabled("● Showing test pattern"))
+        } else if model.connected {
+            menu.addItem(.disabled("● \(model.playback?.title ?? "Video")"))
+            menu.addItem(.disabled("    \(model.stats.summary)"))
+        } else {
+            menu.addItem(.disabled("Not active — press ⌥⇧P on a video in the browser"))
+        }
+        menu.addItem(ClosureMenuItem(model.testPattern ? "Stop test pattern" : "Show test pattern") { [unowned self] in
+            model.testPattern ? stopTestPattern() : startTestPattern()
+        })
+
+        // ── Live Apps ──
+        menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: "Live Apps (beta) — any app, fully usable"))
+        if let info = model.live {
+            menu.addItem(.disabled("● \(info.appName)\(info.title.isEmpty ? "" : " — \(info.title)")"))
+            menu.addItem(ClosureMenuItem("Put it back on the desktop") { [unowned self] in Task { await live.unfloat() } })
+            if model.liveCaptured {
+                menu.addItem(ClosureMenuItem("Release the cursor  (⌃⌥E)") { [unowned self] in live.bridge.release() })
+            }
+        } else {
+            menu.addItem(.disabled("Not active"))
+        }
+        menu.addItem(ClosureMenuItem("Float the app I'm in  (⌃⌥F)") { [unowned self] in
+            // The menu itself is frontmost now; use the app that was active before it opened.
+            if let app = lastUserApp { Task { await live.float(app) } }
+        })
+        menu.addItem(submenu("Float an app", floatableApps().map { app in
+            let item = ClosureMenuItem(app.localizedName ?? "App") { [unowned self] in Task { await live.float(app) } }
+            item.image = app.icon.map { icon in
+                let small = icon.copy() as! NSImage
+                small.size = NSSize(width: 16, height: 16)
+                return small
+            }
+            return item
+        }))
+        if !live.permissionsGranted(prompt: false) {
+            menu.addItem(ClosureMenuItem("⚠︎ Needs Screen Recording + Accessibility — Grant…") { [unowned self] in
+                _ = live.permissionsGranted(prompt: true)
+            })
+        }
+
+        // ── The floating window ──
+        if panel.isVisible || model.connected || model.testPattern || model.live != nil {
+            menu.addItem(.separator())
+            menu.addItem(.sectionHeader(title: "Floating window"))
+            menu.addItem(ClosureMenuItem(panel.isVisible ? "Hide" : "Show") { [unowned self] in
                 panel.isVisible ? panel.hide() : panel.show()
             })
             menu.addItem(ClosureMenuItem(model.isStashed ? "Bring back from edge  (⌃⌥P)" : "Slide to edge  (⌃⌥P)") { [unowned self] in
                 panel.toggleStash()
             })
-            menu.addItem(submenu("Size", [
-                ClosureMenuItem("Small") { [unowned self] in panel.setWidth(320) },
-                ClosureMenuItem("Medium") { [unowned self] in panel.setWidth(480) },
-                ClosureMenuItem("Large") { [unowned self] in panel.setWidth(720) },
-                ClosureMenuItem("Half the screen") { [unowned self] in panel.setWidth((NSScreen.main?.frame.width ?? 1440) / 2) },
-                ClosureMenuItem("Toggle big / normal  (double-click the video)") { [unowned self] in panel.toggleZoom() },
-            ]))
+            if model.live == nil {
+                menu.addItem(submenu("Size", [
+                    ClosureMenuItem("Small") { [unowned self] in panel.setWidth(320) },
+                    ClosureMenuItem("Medium") { [unowned self] in panel.setWidth(480) },
+                    ClosureMenuItem("Large") { [unowned self] in panel.setWidth(720) },
+                    ClosureMenuItem("Half the screen") { [unowned self] in panel.setWidth((NSScreen.main?.frame.width ?? 1440) / 2) },
+                    ClosureMenuItem("Toggle big / normal  (double-click the video)") { [unowned self] in panel.toggleZoom() },
+                ]))
+            }
             menu.addItem(submenu("Move to corner", [
                 ClosureMenuItem("Top left") { [unowned self] in panel.move(to: .topLeft) },
                 ClosureMenuItem("Top right") { [unowned self] in panel.move(to: .topRight) },
                 ClosureMenuItem("Bottom left") { [unowned self] in panel.move(to: .bottomLeft) },
                 ClosureMenuItem("Bottom right") { [unowned self] in panel.move(to: .bottomRight) },
             ]))
-            menu.addItem(.separator())
         }
 
-        let opacity = NSMenuItem(title: "Opacity", action: nil, keyEquivalent: "")
-        let opacityMenu = NSMenu()
-        for value in [1.0, 0.85, 0.7, 0.5] {
-            opacityMenu.addItem(ClosureMenuItem("\(Int(value * 100))%", checked: abs(Settings.opacity - value) < 0.01) { [unowned self] in
-                Settings.opacity = value
-                panel.applySettings()
-            })
-        }
-        opacity.submenu = opacityMenu
-        menu.addItem(opacity)
-        menu.addItem(ClosureMenuItem("Ghost mode: see-through, clicks pass through  (⌃⌥G)", checked: model.ghost) { [unowned self] in
-            panel.toggleGhost()
-        })
-        menu.addItem(ClosureMenuItem("Stay still when switching desktops", checked: Settings.stayStillOnSpaceSwitch && StickySpace.isAvailable) { [unowned self] in
-            Settings.stayStillOnSpaceSwitch.toggle()
-            panel.applySettings()
-        })
-        menu.addItem(ClosureMenuItem("Snap to corners", checked: Settings.snapToCorners) {
-            Settings.snapToCorners.toggle()
-        })
-        menu.addItem(ClosureMenuItem("Pause while slid to edge", checked: Settings.pauseWhenStashed) {
-            Settings.pauseWhenStashed.toggle()
-        })
-        menu.addItem(ClosureMenuItem("Mute while slid to edge", checked: Settings.muteWhenStashed) {
-            Settings.muteWhenStashed.toggle()
-        })
-        menu.addItem(ClosureMenuItem("Thin progress line when controls are hidden", checked: Settings.showProgressLine) { [unowned self] in
-            Settings.showProgressLine.toggle()
-            model.objectWillChange.send()
-        })
-        menu.addItem(ClosureMenuItem("Scroll over the video: sideways seeks, up/down volume", checked: Settings.scrollGestures) {
-            Settings.scrollGestures.toggle()
-        })
-        menu.addItem(ClosureMenuItem("Hide from screen sharing", checked: Settings.hideFromScreenSharing) { [unowned self] in
-            Settings.hideFromScreenSharing.toggle()
-            panel.applySettings()
-        })
-
-        let level = NSMenuItem(title: "Window level", action: nil, keyEquivalent: "")
-        let levelMenu = NSMenu()
-        for option in PanelLevel.allCases {
-            levelMenu.addItem(ClosureMenuItem(option.title, checked: Settings.level == option) { [unowned self] in
-                Settings.level = option
-                panel.applySettings()
-            })
-        }
-        level.submenu = levelMenu
-        menu.addItem(level)
-        menu.addItem(submenu("Keyboard shortcuts", [
-            ("Slide to edge / bring back", "⌃⌥P"), ("Play / pause", "⌃⌥Space"), ("Back / forward 10 s", "⌃⌥← / ⌃⌥→"),
-            ("Mute", "⌃⌥M"), ("Bigger / smaller", "⌃⌥= / ⌃⌥-"), ("Ghost mode", "⌃⌥G"), ("Back to the tab", "⌃⌥B"),
-            ("Pop out (in the browser)", "⌥⇧P"),
-        ].map { NSMenuItem.disabled("\($0.1)    \($0.0)") }))
+        // ── Settings, shortcuts, app ──
         menu.addItem(.separator())
-
-        menu.addItem(ClosureMenuItem(model.testPattern ? "Stop test pattern" : "Show test pattern") { [unowned self] in
-            model.testPattern ? stopTestPattern() : startTestPattern()
-        })
+        menu.addItem(settingsMenu())
+        menu.addItem(submenu("Keyboard shortcuts", shortcutItems()))
         let loginEnabled = SMAppService.mainApp.status == .enabled
         menu.addItem(ClosureMenuItem("Open at login", checked: loginEnabled) {
             do {
@@ -375,6 +414,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem("Quit PiP Anywhere") { NSApp.terminate(nil) })
+    }
+
+    private func settingsMenu() -> NSMenuItem {
+        let opacity = submenu("Opacity", [1.0, 0.85, 0.7, 0.5].map { value in
+            ClosureMenuItem("\(Int(value * 100))%", checked: abs(Settings.opacity - value) < 0.01) { [unowned self] in
+                Settings.opacity = value
+                panel.applySettings()
+            }
+        })
+        let level = submenu("Window level", PanelLevel.allCases.map { option in
+            ClosureMenuItem(option.title, checked: Settings.level == option) { [unowned self] in
+                Settings.level = option
+                panel.applySettings()
+            }
+        })
+        return submenu("Settings", [
+            .sectionHeader(title: "Window"),
+            opacity,
+            ClosureMenuItem("Ghost mode: see-through, clicks pass through  (⌃⌥G)", checked: model.ghost) { [unowned self] in
+                panel.toggleGhost()
+            },
+            ClosureMenuItem("Stay still when switching desktops", checked: Settings.stayStillOnSpaceSwitch && StickySpace.isAvailable) { [unowned self] in
+                Settings.stayStillOnSpaceSwitch.toggle()
+                panel.applySettings()
+            },
+            ClosureMenuItem("Snap to corners", checked: Settings.snapToCorners) { Settings.snapToCorners.toggle() },
+            ClosureMenuItem("Hide from screen sharing", checked: Settings.hideFromScreenSharing) { [unowned self] in
+                Settings.hideFromScreenSharing.toggle()
+                panel.applySettings()
+            },
+            level,
+            .separator(),
+            .sectionHeader(title: "Video"),
+            ClosureMenuItem("Pause while slid to edge", checked: Settings.pauseWhenStashed) { Settings.pauseWhenStashed.toggle() },
+            ClosureMenuItem("Mute while slid to edge", checked: Settings.muteWhenStashed) { Settings.muteWhenStashed.toggle() },
+            ClosureMenuItem("Thin progress line when controls are hidden", checked: Settings.showProgressLine) { [unowned self] in
+                Settings.showProgressLine.toggle()
+                model.objectWillChange.send()
+            },
+            ClosureMenuItem("Scroll over the video: sideways seeks, up/down volume", checked: Settings.scrollGestures) {
+                Settings.scrollGestures.toggle()
+            },
+        ])
+    }
+
+    private func shortcutItems() -> [NSMenuItem] {
+        let groups: [(String, [(String, String)])] = [
+            ("Video", [("Pop out (in the browser)", "⌥⇧P"), ("Play / pause", "⌃⌥Space"), ("Back / forward 10 s", "⌃⌥← / ⌃⌥→"),
+                       ("Mute", "⌃⌥M"), ("Back to the tab", "⌃⌥B")]),
+            ("Live Apps", [("Float the app I'm in", "⌃⌥F"), ("Release the cursor", "⌃⌥E")]),
+            ("Window", [("Slide to edge / bring back", "⌃⌥P"), ("Bigger / smaller", "⌃⌥= / ⌃⌥-"), ("Ghost mode", "⌃⌥G")]),
+        ]
+        return groups.flatMap { title, items in
+            [NSMenuItem.sectionHeader(title: title)] + items.map { NSMenuItem.disabled("\($0.1)    \($0.0)") }
+        }
+    }
+
+    /// Regular apps with a Dock presence, except us.
+    private func floatableApps() -> [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.processIdentifier != getpid() && !$0.isTerminated }
+            .sorted { ($0.localizedName ?? "").localizedCaseInsensitiveCompare($1.localizedName ?? "") == .orderedAscending }
     }
 
     // MARK: Debug

@@ -59,6 +59,8 @@ extension HotKeys.Shortcut {
     static let ghost = Self(keyCode: kVK_ANSI_G, modifiers: ctrlOpt, title: "⌃⌥G")
     static let backToTab = Self(keyCode: kVK_ANSI_B, modifiers: ctrlOpt, title: "⌃⌥B")
     static let mute = Self(keyCode: kVK_ANSI_M, modifiers: ctrlOpt, title: "⌃⌥M")
+    static let floatFrontmost = Self(keyCode: kVK_ANSI_F, modifiers: ctrlOpt, title: "⌃⌥F")
+    static let releaseCursor = Self(keyCode: kVK_ANSI_E, modifiers: ctrlOpt, title: "⌃⌥E")
     static let grow = Self(keyCode: kVK_ANSI_Equal, modifiers: ctrlOpt, title: "⌃⌥=")
     static let shrink = Self(keyCode: kVK_ANSI_Minus, modifiers: ctrlOpt, title: "⌃⌥-")
 }
