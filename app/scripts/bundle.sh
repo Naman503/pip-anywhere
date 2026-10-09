@@ -13,5 +13,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/PiPAnywhere" "$APP/Contents/MacOS/PiPAnywhere"
 cp Support/Info.plist "$APP/Contents/Info.plist"
-codesign --force --sign - "$APP"
+cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# SIGN_IDENTITY (e.g. an "Apple Development: …" certificate) keeps the signature
+# stable across builds, so Screen Recording / Accessibility grants survive rebuilds.
+# Without it the app is ad-hoc signed.
+codesign --force --sign "${SIGN_IDENTITY:--}" "$APP"
 echo "Built $APP"
