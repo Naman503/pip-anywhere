@@ -95,7 +95,38 @@ enum Settings {
     }
 }
 
+/// Logs to stderr and to ~/Library/Logs/PiP Anywhere/PiPAnywhere.log (kept under ~2 MB),
+/// so problems can be diagnosed even when the app was opened from Finder.
 func log(_ message: String) {
     let stamp = Date().formatted(.iso8601.time(includingFractionalSeconds: true))
-    FileHandle.standardError.write(Data("[\(stamp)] \(message)\n".utf8))
+    let line = Data("[\(stamp)] \(message)\n".utf8)
+    FileHandle.standardError.write(line)
+    LogFile.shared.append(line)
+}
+
+final class LogFile: @unchecked Sendable {
+    static let shared = LogFile()
+    private let queue = DispatchQueue(label: "pipanywhere.log")
+    let url: URL = {
+        let dir = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs/PiP Anywhere", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("PiPAnywhere.log")
+    }()
+
+    func append(_ data: Data) {
+        queue.async { [url] in
+            if let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int, size > 2_000_000 {
+                try? FileManager.default.removeItem(at: url.appendingPathExtension("old"))
+                try? FileManager.default.moveItem(at: url, to: url.appendingPathExtension("old"))
+            }
+            if let handle = try? FileHandle(forWritingTo: url) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+    }
 }

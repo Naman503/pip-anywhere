@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ScreenCaptureKit
 import PiPCore
 import ServiceManagement
 
@@ -492,6 +493,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// our own window needs no Screen Recording permission. CGWindowListCreateImage is
     /// unavailable to the macOS 15+ SDK, hence dlsym; falls back to drawing the views.
     private func snapshot(to path: String) {
+        // With Screen Recording allowed, ScreenCaptureKit shows exactly what is on screen.
+        if CGPreflightScreenCaptureAccess() {
+            Task {
+                do {
+                    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                    guard let window = content.windows.first(where: { $0.windowID == CGWindowID(panel.panel.windowNumber) }) else {
+                        log("snapshot: own window not in shareable content")
+                        return
+                    }
+                    let config = SCStreamConfiguration()
+                    config.width = Int(window.frame.width * 2)
+                    config.height = Int(window.frame.height * 2)
+                    let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)
+                    try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                    log("snapshot (ScreenCaptureKit) written to \(path)")
+                } catch {
+                    log("snapshot failed: \(error)")
+                }
+            }
+            return
+        }
         typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
         let url = URL(fileURLWithPath: path)
         var data: Data?

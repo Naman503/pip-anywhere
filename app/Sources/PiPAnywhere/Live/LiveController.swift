@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import ScreenCaptureKit
 
 /// Live Apps: floats a real app window in the panel. The window is moved onto the
 /// hidden stage, captured zero-copy into the panel, and driven with the real cursor.
@@ -91,8 +92,8 @@ final class LiveController {
                                     scale: stage.screen?.backingScaleFactor ?? 2, fps: 60)
             fpsCap = 60
         } catch {
-            log("live: capture failed: \(error)")
-            model.live?.notice = "Can't capture: allow Screen Recording for PiP Anywhere"
+            log("live: capture failed: \(error) · screen recording preflight \(CGPreflightScreenCaptureAccess())")
+            model.live?.notice = Self.explain(error)
         }
         bridge.activate()
         startWatchdog()
@@ -224,6 +225,8 @@ final class LiveController {
             if argument == "destroy" { stage.destroy() } else { stage.create() }
         case "status":
             log("live: \(stage.describe()) · floating \(session.map { "\($0.app.localizedName ?? "?") at \($0.frame.integral)" } ?? "nothing") · surface \(panel.liveSurfaceRect.integral) · captured \(bridge.isCaptured) · cap \(fpsCap)")
+        case "diagnose":
+            Task { await diagnose() }
         case "permissions":
             log("live: permissions \(permissionsGranted(prompt: true) ? "all granted" : "requested")")
         case "float":
@@ -244,6 +247,30 @@ final class LiveController {
             applyFrameRateCap()
         default:
             log("live: unknown command \(command)")
+        }
+    }
+
+    /// A notice that says what actually went wrong.
+    static func explain(_ error: Error) -> String {
+        let ns = error as NSError
+        // ScreenCaptureKit "user declined" (-3801): permission missing or not yet applied.
+        if ns.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && ns.code == -3801 {
+            return CGPreflightScreenCaptureAccess()
+                ? "Screen Recording was just allowed: quit and reopen PiP Anywhere to apply it"
+                : "Allow Screen Recording for PiP Anywhere in System Settings"
+        }
+        return "Can't capture: \(ns.localizedDescription)"
+    }
+
+    /// Checks everything Live Apps needs and logs the result ("live:diagnose").
+    func diagnose() async {
+        log("diagnose: accessibility \(WindowMover.isTrusted(prompt: false)) · screen recording preflight \(CGPreflightScreenCaptureAccess()) · CGVirtualDisplay \(stage.isActive ? "active" : "available") · \(Bundle.main.bundlePath)")
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            log("diagnose: shareable content OK · \(content.displays.count) displays \(content.displays.map(\.displayID)) · \(content.applications.count) apps · \(content.windows.count) windows")
+        } catch {
+            let ns = error as NSError
+            log("diagnose: shareable content FAILED · \(ns.domain) \(ns.code) · \(ns.localizedDescription)")
         }
     }
 
