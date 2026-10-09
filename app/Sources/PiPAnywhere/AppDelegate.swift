@@ -38,6 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hideTask: Task<Void, Never>?
     private var lastStatsLog = Date.distantPast
     private var live: LiveController!
+    private let browser = BrowserModel()
+    private var keyMonitor: Any?
     private var cancellables = Set<AnyCancellable>()
     /// The app the user was in before opening our menu ("Float the app I'm in").
     private var lastUserApp: NSRunningApplication?
@@ -56,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         let capture = StageCapture()
         let cursorLayer = LiveController.makeCursorLayer()
-        panel = PanelController(model: model, videoLayer: renderer.layer, liveLayer: capture.layer, cursorLayer: cursorLayer) { [unowned self] controller in
+        panel = PanelController(model: model, videoLayer: renderer.layer, liveLayer: capture.layer, cursorLayer: cursorLayer, browser: browser) { [unowned self] controller in
             PanelActions(
                 dragChanged: { controller.dragChanged() },
                 dragEnded: { controller.dragEnded() },
@@ -76,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setUpServer()
         setUpStatusItem()
         setUpHotKeys()
+        setUpBrowserShortcuts()
 
         DistributedNotificationCenter.default().addObserver(forName: Settings.reloadNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -173,8 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func streamStarted(_ config: StreamConfig) {
         hideTask?.cancel()
-        // The window is showing a live app; the video keeps decoding but isn't shown.
-        if model.live != nil { return }
+        // The window is showing a live app or the browser; the video keeps decoding but isn't shown.
+        if model.live != nil || model.browserActive { return }
         if model.testPattern { stopTestPattern() }
         model.connected = true
         panel.setVideoSize(width: config.width, height: config.height)
@@ -196,7 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func closeStream() {
-        if live.isFloating {
+        if model.browserActive {
+            closeBrowser()
+        } else if live.isFloating {
             Task { await live.unfloat() }
         } else if model.testPattern {
             stopTestPattern()
@@ -237,6 +242,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.hide()
     }
 
+    // MARK: Floating browser
+
+    /// Shows the built-in browser (restoring its tabs), optionally opening `url` in a new tab.
+    func openBrowser(_ url: URL? = nil) {
+        if live.isFloating { Task { await live.unfloat() } }
+        if model.testPattern { stopTestPattern() }
+        Task {
+            await browser.prepare() // extensions + ad blocker, before the first tab
+            browser.restoreSession()
+            if let url { browser.newTab(url) }
+            model.browserActive = true
+            let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
+            let size = Settings.browserSize ?? CGSize(width: min(1000, screen.width * 0.6), height: min(700, screen.height * 0.7))
+            panel.enterBrowserMode(size: size)
+            panel.show()
+            panel.focus()
+            log("browser: open with \(browser.tabs.count) tab(s)")
+        }
+    }
+
+    func closeBrowser() {
+        guard model.browserActive else { return }
+        browser.saveSession()
+        Settings.browserSize = panel.panel.frame.size
+        model.browserActive = false
+        panel.exitLiveMode()
+        panel.hide()
+        log("browser: closed (tabs kept)")
+    }
+
+    func toggleBrowser() {
+        if model.browserActive {
+            if model.isStashed { panel.toggleStash() } else { closeBrowser() }
+        } else {
+            openBrowser()
+        }
+    }
+
+    /// Asks Brave / Chrome / Safari for its current tab's address (Apple Events; macOS asks once).
+    private func currentTabURL(of appName: String) -> URL? {
+        let source = appName == "Safari"
+            ? "tell application \"Safari\" to return URL of current tab of front window"
+            : "tell application \"\(appName)\" to return URL of active tab of front window"
+        var error: NSDictionary?
+        let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
+        if let error { log("browser: couldn't read \(appName)'s tab: \(error[NSAppleScript.errorMessage] ?? error)") }
+        return result?.stringValue.flatMap(URL.init(string:))
+    }
+
+    private static let knownBrowsers = [
+        ("com.brave.Browser", "Brave Browser"), ("com.google.Chrome", "Google Chrome"),
+        ("com.apple.Safari", "Safari"), ("company.thebrowser.Browser", "Arc"), ("com.microsoft.edgemac", "Microsoft Edge"),
+    ]
+
+    /// ⌘-shortcuts while the floating browser has the keyboard. A menu-bar app has no
+    /// Edit menu, so copy/paste/undo are routed here too.
+    private func setUpBrowserShortcuts() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Local monitors run on the main thread; only a Bool leaves the isolated block.
+            nonisolated(unsafe) let keyEvent = event
+            let handled = MainActor.assumeIsolated {
+                guard let self, self.model.browserActive, self.panel.panel.isKeyWindow else { return false }
+                return self.handleBrowserKey(keyEvent)
+            }
+            return handled ? nil : event
+        }
+    }
+
+    private func handleBrowserKey(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let tab = browser.selected
+        if flags == .control, event.keyCode == 48 { browser.selectNext(1); return true }           // ⌃Tab
+        if flags == [.control, .shift], event.keyCode == 48 { browser.selectNext(-1); return true } // ⌃⇧Tab
+        let edit: Selector? = switch (flags, key) {
+        case (.command, "c"): #selector(NSText.copy(_:))
+        case (.command, "x"): #selector(NSText.cut(_:))
+        case (.command, "v"): #selector(NSText.paste(_:))
+        case (.command, "a"): #selector(NSText.selectAll(_:))
+        case (.command, "z"): Selector(("undo:"))
+        case ([.command, .shift], "z"): Selector(("redo:"))
+        default: nil
+        }
+        if let edit { return NSApp.sendAction(edit, to: nil, from: nil) }
+        guard flags == .command || flags == [.command, .shift] else { return false }
+        switch key {
+        case "t": browser.newTab()
+        case "w": if let tab { browser.close(tab) }; if browser.isEmpty { closeBrowser() }
+        case "l": browser.focusAddressBar += 1
+        case "r": tab?.webView.reload()
+        case "[": tab?.webView.goBack()
+        case "]": tab?.webView.goForward()
+        case "=", "+": tab.map { $0.webView.pageZoom = min($0.webView.pageZoom + 0.1, 3) }
+        case "-": tab.map { $0.webView.pageZoom = max($0.webView.pageZoom - 0.1, 0.3) }
+        case "0": tab?.webView.pageZoom = 1
+        case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+            let index = Int(key)! - 1
+            if index < browser.tabs.count { browser.select(browser.tabs[key == "9" ? browser.tabs.count - 1 : index]) }
+        default: return false
+        }
+        return true
+    }
+
     /// "window:stash|unstash|show|hide|ghost" or a playback action ("seek:-10").
     private func runScripted(_ name: String, _ argument: String?) {
         if name == "window" {
@@ -257,6 +365,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case let arg? where arg.hasPrefix("corner:"):
                 if let corner = ScreenCorner(rawValue: String(arg.dropFirst(7))) { panel.move(to: corner) }
             default: break
+            }
+        } else if name == "browser" {
+            switch argument {
+            case "close": closeBrowser()
+            case let arg? where arg.hasPrefix("eval:"):
+                // Debug: run JavaScript (may return a promise) in the current tab and log the result.
+                let script = String(arg.dropFirst(5))
+                Task {
+                    do {
+                        let result = try await browser.selected?.webView.callAsyncJavaScript(script, contentWorld: .page)
+                        log("browser eval: \(result.map { "\($0)" } ?? "nil")")
+                    } catch {
+                        log("browser eval failed: \(error.localizedDescription)")
+                    }
+                }
+            case let arg? where arg.hasPrefix("open:"): openBrowser(URL(string: String(arg.dropFirst(5))))
+            default: openBrowser()
             }
         } else if name == "live", let argument {
             live.run(argument)
@@ -282,6 +407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keys.register(.mute) { [unowned self] in model.toggleMute() }
         keys.register(.ghost) { [unowned self] in panel.toggleGhost() }
         keys.register(.backToTab) { [unowned self] in model.command(.focusTab) }
+        keys.register(.toggleBrowser) { [unowned self] in toggleBrowser() }
         keys.register(.floatNewBrowserWindow) { [unowned self] in Task { await self.live.toggleNewBrowserWindow() } }
         keys.register(.floatFrontmost) { [unowned self] in Task { await self.live.floatFrontmost() } }
         keys.register(.releaseCursor) { [unowned self] in live.bridge.release() }
@@ -305,7 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
         updateStatusIcon()
         // The icon shows the mode: idle, a video popped out, or an app floating.
-        Publishers.CombineLatest3(model.$connected, model.$testPattern, model.$live.map { $0 != nil })
+        Publishers.CombineLatest4(model.$connected, model.$testPattern, model.$live.map { $0 != nil }, model.$browserActive)
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateStatusIcon() }
             .store(in: &cancellables)
@@ -314,7 +440,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusIcon() {
         let symbol: String
         let description: String
-        if model.live != nil {
+        if model.browserActive {
+            symbol = "globe"
+            description = "PiP Anywhere — floating browser"
+        } else if model.live != nil {
             symbol = "macwindow.on.rectangle"
             description = "PiP Anywhere — app floating"
         } else if model.connected || model.testPattern {
@@ -348,6 +477,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             model.testPattern ? stopTestPattern() : startTestPattern()
         })
 
+        // ── Floating browser ──
+        menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: "Floating browser — built in, no permissions"))
+        if model.browserActive {
+            menu.addItem(.disabled("● \(browser.tabs.count) tab\(browser.tabs.count == 1 ? "" : "s") open"))
+            menu.addItem(ClosureMenuItem("Close the floating browser  (⌃⌥N)") { [unowned self] in closeBrowser() })
+        } else {
+            menu.addItem(ClosureMenuItem("Open the floating browser  (⌃⌥N)") { [unowned self] in openBrowser() })
+        }
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        for (bundleID, name) in Self.knownBrowsers where running.contains(bundleID) {
+            menu.addItem(ClosureMenuItem("Open \(name)'s current tab here") { [unowned self] in
+                if let url = currentTabURL(of: name) { openBrowser(url) }
+            })
+        }
+        menu.addItem(ClosureMenuItem("Block ads and trackers, skip YouTube ads", checked: Settings.blockAds) { [unowned self] in
+            Settings.blockAds.toggle()
+            browser.applyContentBlocking()
+        })
+        menu.addItem(ClosureMenuItem("Extensions…") { [unowned self] in browser.revealExtensionsFolder() })
+
         // ── Live Apps ──
         menu.addItem(.separator())
         menu.addItem(.sectionHeader(title: "Live Apps (beta) — real apps, fully usable"))
@@ -364,7 +514,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(.disabled("Not active"))
         }
         if let browserName {
-            menu.addItem(ClosureMenuItem("Float a new \(browserName) window  (⌃⌥N)") { [unowned self] in
+            menu.addItem(ClosureMenuItem("Float a new \(browserName) window  (⌃⌥⇧N)") { [unowned self] in
                 Task { await live.toggleNewBrowserWindow() }
             })
         }
@@ -388,7 +538,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         // ── The floating window ──
-        if panel.isVisible || model.connected || model.testPattern || model.live != nil {
+        if panel.isVisible || model.connected || model.testPattern || model.live != nil || model.browserActive {
             menu.addItem(.separator())
             menu.addItem(.sectionHeader(title: "Floating window"))
             menu.addItem(ClosureMenuItem(panel.isVisible ? "Hide" : "Show") { [unowned self] in
@@ -397,7 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(ClosureMenuItem(model.isStashed ? "Bring back from edge  (⌃⌥P)" : "Slide to edge  (⌃⌥P)") { [unowned self] in
                 panel.toggleStash()
             })
-            if model.live == nil {
+            if model.live == nil && !model.browserActive {
                 menu.addItem(submenu("Size", [
                     ClosureMenuItem("Small") { [unowned self] in panel.setWidth(320) },
                     ClosureMenuItem("Medium") { [unowned self] in panel.setWidth(480) },
@@ -477,7 +627,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let groups: [(String, [(String, String)])] = [
             ("Video", [("Pop out (in the browser)", "⌥⇧P"), ("Play / pause", "⌃⌥Space"), ("Back / forward 10 s", "⌃⌥← / ⌃⌥→"),
                        ("Mute", "⌃⌥M"), ("Back to the tab", "⌃⌥B")]),
-            ("Live Apps", [("Float a new browser window (Brave)", "⌃⌥N"), ("Float the app I'm in", "⌃⌥F"), ("Release the cursor", "⌃⌥E")]),
+            ("Floating browser", [("Open / close", "⌃⌥N"), ("New tab · close tab", "⌘T · ⌘W"), ("Address bar", "⌘L"),
+                                  ("Back · forward · reload", "⌘[ · ⌘] · ⌘R"), ("Zoom", "⌘+ · ⌘- · ⌘0"), ("Next / previous tab", "⌃Tab · ⌃⇧Tab")]),
+            ("Live Apps", [("Float a new Brave window", "⌃⌥⇧N"), ("Float the app I'm in", "⌃⌥F"), ("Release the cursor", "⌃⌥E")]),
             ("Window", [("Slide to edge / bring back", "⌃⌥P"), ("Bigger / smaller", "⌃⌥= / ⌃⌥-"), ("Ghost mode", "⌃⌥G")]),
         ]
         return groups.flatMap { title, items in

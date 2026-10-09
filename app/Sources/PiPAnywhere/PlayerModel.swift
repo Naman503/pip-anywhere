@@ -18,6 +18,8 @@ final class PlayerModel: ObservableObject {
     @Published var testPattern = false
     /// Set while the panel shows a live app instead of a browser video.
     @Published var live: LiveInfo?
+    /// The built-in floating browser is showing.
+    @Published var browserActive = false
     @Published var liveCaptured = false
 
     /// Short feedback shown in the middle of the video ("Volume 40%", "+10 s").

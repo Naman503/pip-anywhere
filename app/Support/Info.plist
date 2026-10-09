@@ -23,6 +23,8 @@
 	<!-- Menu-bar app: no Dock icon. Also required to float over full-screen Spaces. -->
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>PiP Anywhere asks your browser for the current tab's address so it can open it in the floating browser.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

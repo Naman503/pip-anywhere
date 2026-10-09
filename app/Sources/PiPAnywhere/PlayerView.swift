@@ -24,6 +24,7 @@ struct PlayerView: View {
     let videoLayer: CALayer
     let liveLayer: CALayer
     let cursorLayer: CALayer
+    let browser: BrowserModel
     let actions: PanelActions
 
     @State private var scrubTime: Double?
@@ -33,7 +34,9 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        if let live = model.live {
+        if model.browserActive {
+            BrowserView(model: model, browser: browser, actions: actions)
+        } else if let live = model.live {
             LiveView(model: model, live: live, layer: liveLayer, cursorLayer: cursorLayer, actions: actions)
         } else {
             videoBody

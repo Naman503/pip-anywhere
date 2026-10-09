@@ -54,6 +54,25 @@ final class Stage {
         return true
     }
 
+    /// Changes the stage's size in place (e.g. to match the floating window while an app
+    /// is in full screen on it). Must stay within the size it was created with.
+    @discardableResult
+    func setSize(_ newSize: CGSize) -> Bool {
+        guard let display else { return false }
+        let maxSize = Self.sizeForScreens()
+        let w = (min(newSize.width, maxSize.width) / 2).rounded() * 2
+        let h = (min(newSize.height, maxSize.height) / 2).rounded() * 2
+        let ok = display.applyModeWidth(UInt(w), height: UInt(h), refreshRate: 60, hiDPI: true)
+        if ok { size = CGSize(width: w, height: h) }
+        log("stage: resize to \(Int(w))×\(Int(h)) \(ok ? "ok" : "REFUSED")")
+        return ok
+    }
+
+    /// Back to the size it was created with.
+    func restoreFullSize() {
+        setSize(Self.sizeForScreens())
+    }
+
     func destroy() {
         guard let id = displayID else { return }
         display = nil

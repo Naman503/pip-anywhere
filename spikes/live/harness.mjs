@@ -29,6 +29,21 @@ if (process.env.WINDOW_STATE) {
 const pid = execSync('pgrep -n -x "Google Chrome for Testing"').toString().trim();
 console.log(JSON.stringify({ ready: true, pid: Number(pid) }));
 
+// CONTENT_FULLSCREEN_AT=s1,s2: click the page's "Video full screen" button (like a video's
+// full-screen control) after s1 seconds, leave content full screen after s2.
+if (process.env.CONTENT_FULLSCREEN_AT) {
+  const [enter, leave] = process.env.CONTENT_FULLSCREEN_AT.split(',').map(Number);
+  setTimeout(() => page.click('#fs').catch(() => {}), enter * 1000);
+  if (leave) setTimeout(() => page.evaluate(() => document.exitFullscreen()).catch(() => {}), leave * 1000);
+}
+// FULLSCREEN_AT=s1,s2: enter native full screen after s1 seconds, leave it after s2.
+if (process.env.FULLSCREEN_AT) {
+  const [enter, leave] = process.env.FULLSCREEN_AT.split(',').map(Number);
+  const cdp = await context.newCDPSession(page);
+  const { windowId } = await cdp.send('Browser.getWindowForTarget');
+  setTimeout(() => cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } }).catch(() => {}), enter * 1000);
+  if (leave) setTimeout(() => cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } }).catch(() => {}), leave * 1000);
+}
 const end = Date.now() + seconds * 1000;
 while (Date.now() < end) {
   await new Promise((r) => setTimeout(r, 2000));
@@ -40,6 +55,7 @@ while (Date.now() < end) {
       field: document.getElementById('field').value,
       scrollTop: document.getElementById('list').scrollTop,
       size: `${innerWidth}x${innerHeight}`,
+      contentFullscreen: !!document.fullscreenElement,
       events: window.__log.slice(-6),
     }));
     console.log(JSON.stringify({ t: Math.round((end - Date.now()) / 1000), ...s }));

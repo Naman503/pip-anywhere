@@ -78,6 +78,14 @@
     return self;
 }
 
+- (BOOL)applyModeWidth:(NSUInteger)width height:(NSUInteger)height refreshRate:(double)refreshRate hiDPI:(BOOL)hiDPI {
+    if (!_display) return NO;
+    CGVirtualDisplaySettings *settings = [[NSClassFromString(@"CGVirtualDisplaySettings") alloc] init];
+    settings.hiDPI = hiDPI ? 1 : 0;
+    settings.modes = @[[[NSClassFromString(@"CGVirtualDisplayMode") alloc] initWithWidth:width height:height refreshRate:refreshRate]];
+    return [_display applySettings:settings];
+}
+
 - (CGDirectDisplayID)displayID {
     return _display.displayID;
 }

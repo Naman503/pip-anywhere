@@ -62,7 +62,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var lastLiveResize = Date.distantPast
     static let liveMinSize = CGSize(width: 320, height: 220)
 
-    init(model: PlayerModel, videoLayer: CALayer, liveLayer: CALayer, cursorLayer: CALayer, actions: @escaping (PanelController) -> PanelActions) {
+    init(model: PlayerModel, videoLayer: CALayer, liveLayer: CALayer, cursorLayer: CALayer, browser: BrowserModel,
+         actions: @escaping (PanelController) -> PanelActions) {
         self.model = model
         let fallback = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let frame = Settings.savedFrame.map { PanelGeometry.keptOnScreen($0, in: Self.screenFrame(containing: $0)) }
@@ -70,7 +71,7 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel = PiPPanel(contentRect: frame)
         super.init()
 
-        let hosting = PiPHostingView(rootView: PlayerView(model: model, videoLayer: videoLayer, liveLayer: liveLayer, cursorLayer: cursorLayer, actions: actions(self)))
+        let hosting = PiPHostingView(rootView: PlayerView(model: model, videoLayer: videoLayer, liveLayer: liveLayer, cursorLayer: cursorLayer, browser: browser, actions: actions(self)))
         hosting.sizingOptions = []
         hosting.onScroll = { [weak self] event in self?.scrolled(event) }
         hosting.resizeZones = { [weak self] in
@@ -204,8 +205,25 @@ final class PanelController: NSObject, NSWindowDelegate {
         setLiveSurfaceSize(contentSize)
     }
 
+    /// The floating browser: free shape, and any click makes the window take the keyboard
+    /// (without activating the app, so the app you were in stays in front).
+    func enterBrowserMode(size: CGSize) {
+        if !freeShape { videoFrame = panel.frame }
+        freeShape = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.resizeIncrements = NSSize(width: 1, height: 1)
+        let frame = panel.frame
+        let target = NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
+        panel.setFrame(keptOffStage(PanelGeometry.clamped(target, in: visibleFrame)), display: true)
+    }
+
+    func focus() {
+        panel.makeKey()
+    }
+
     func exitLiveMode() {
         guard freeShape else { return }
+        panel.becomesKeyOnlyIfNeeded = true
         freeShape = false
         panel.contentAspectRatio = NSSize(width: aspect, height: 1)
         if let videoFrame { panel.setFrame(videoFrame, display: true) }
@@ -388,7 +406,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private func scrolled(_ event: NSEvent) {
         // Momentum after lifting the fingers would overshoot.
-        guard Settings.scrollGestures, !model.isStashed, model.live == nil, event.momentumPhase.isEmpty else { return }
+        guard Settings.scrollGestures, !model.isStashed, model.live == nil, !model.browserActive, event.momentumPhase.isEmpty else { return }
         // Physical finger/wheel direction, whatever the "natural scrolling" setting.
         let inverted = event.isDirectionInvertedFromDevice
         let dx = inverted ? event.scrollingDeltaX : -event.scrollingDeltaX // < 0: fingers moved left

@@ -20,6 +20,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, readonly) CGDirectDisplayID displayID;
 
+/// Switches the display to a new single mode (points) in place. Returns NO if refused.
+- (BOOL)applyModeWidth:(NSUInteger)width height:(NSUInteger)height refreshRate:(double)refreshRate hiDPI:(BOOL)hiDPI;
+
 @end
 
 NS_ASSUME_NONNULL_END

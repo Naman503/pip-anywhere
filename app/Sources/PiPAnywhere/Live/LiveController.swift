@@ -42,6 +42,12 @@ final class LiveController {
         let owned: Bool
         /// Current frame on the stage (global top-left points).
         var frame: CGRect
+        /// The app put the window in full screen (e.g. a video's full-screen button). The
+        /// stage then shrinks to exactly the floating window, so full screen means
+        /// "fill the floating window" instead of a whole display.
+        var inFullScreen = false
+        /// Where the window was on the stage before full screen.
+        var windowedFrame: CGRect?
     }
 
     static let defaultSurfaceSize = CGSize(width: 1000, height: 660)
@@ -226,6 +232,11 @@ final class LiveController {
         bridge.deactivate()
         watchdog?.invalidate()
         await capture.stop()
+        if s.inFullScreen && !s.owned && WindowMover.isAlive(s.window) {
+            WindowMover.setFullScreen(s.window, false)
+            stage.restoreFullSize()
+            try? await Task.sleep(for: .milliseconds(900))
+        }
         if WindowMover.isAlive(s.window) {
             if s.owned {
                 // Opened just for floating: closing the float closes it.
@@ -251,6 +262,15 @@ final class LiveController {
     /// The panel was resized: resize the real window to match (the app re-lays out).
     private func resize(to size: CGSize) {
         guard var s = session else { return }
+        if s.inFullScreen {
+            // Full screen follows the floating window: resize the stage itself.
+            stage.setSize(size)
+            s.frame = stage.bounds
+            session = s
+            let rect = stageLocal(stage.bounds)
+            Task { await capture.update(sourceRect: rect, scale: stage.screen?.backingScaleFactor ?? 2) }
+            return
+        }
         WindowMover.setFrame(s.window, CGRect(origin: s.frame.origin, size: size))
         let actual = WindowMover.frame(of: s.window) ?? CGRect(origin: s.frame.origin, size: size)
         s.frame = actual
@@ -293,7 +313,9 @@ final class LiveController {
     /// app moved or resized it itself.
     private func startWatchdog() {
         watchdog?.invalidate()
-        watchdog = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        // 4× a second: full screen and window changes are picked up quickly; each check is a
+        // couple of cheap Accessibility reads.
+        watchdog = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkSession() }
         }
     }
@@ -313,6 +335,13 @@ final class LiveController {
             watchdog?.invalidate()
             return
         }
+        // Full screen entered or left by the app itself (e.g. a video's full-screen button).
+        let fullScreen = WindowMover.isFullScreen(s.window)
+        if fullScreen != s.inFullScreen {
+            Task { await fullScreenChanged(fullScreen) }
+            return
+        }
+        if s.inFullScreen { return } // the stage is sized to the panel; nothing else to follow
         if let frame = WindowMover.frame(of: s.window), frame != s.frame {
             s.frame = frame
             session = s
@@ -320,6 +349,43 @@ final class LiveController {
                 panel.setLiveSurfaceSize(frame.size)
             }
             Task { await capture.update(sourceRect: stageLocal(frame)) }
+        }
+    }
+
+    private var changingFullScreen = false
+
+    /// Entering full screen: shrink the stage to the floating window, so the app's full-screen
+    /// view (tabs hidden) fills exactly the floating window. Leaving: give the stage its room
+    /// back and put the window where it was.
+    private func fullScreenChanged(_ fullScreen: Bool) async {
+        guard !changingFullScreen, var s = session else { return }
+        changingFullScreen = true
+        defer { changingFullScreen = false }
+        bridge.release()
+        if fullScreen {
+            s.windowedFrame = s.frame
+            s.inFullScreen = true
+            session = s
+            stage.setSize(panel.liveSurfaceSize)
+            try? await Task.sleep(for: .milliseconds(350)) // the full-screen window follows the display
+            guard var s2 = session else { return }
+            s2.frame = stage.bounds
+            session = s2
+            await capture.update(sourceRect: stageLocal(stage.bounds), scale: stage.screen?.backingScaleFactor ?? 2)
+            log("live: \(s.app.localizedName ?? "app") went full screen: it now fills the floating window (\(Int(stage.size.width))×\(Int(stage.size.height)))")
+        } else {
+            stage.restoreFullSize()
+            try? await Task.sleep(for: .milliseconds(350))
+            guard var s2 = session else { return }
+            let windowed = CGRect(origin: stage.workArea.origin, size: s2.windowedFrame?.size ?? panel.liveSurfaceSize)
+            WindowMover.setFrame(s2.window, windowed)
+            try? await Task.sleep(for: .milliseconds(150))
+            s2.frame = WindowMover.frame(of: s2.window) ?? windowed
+            s2.inFullScreen = false
+            s2.windowedFrame = nil
+            session = s2
+            await capture.update(sourceRect: stageLocal(s2.frame), scale: stage.screen?.backingScaleFactor ?? 2)
+            log("live: \(s.app.localizedName ?? "app") left full screen")
         }
     }
 
@@ -393,6 +459,9 @@ final class LiveController {
             Task { await toggleNewBrowserWindow() }
         case "unfloat":
             Task { await unfloat() }
+        case "stagesize":
+            let n = (argument ?? "").split(separator: ",").compactMap { Double($0) }
+            if n.count == 2 { stage.setSize(CGSize(width: n[0], height: n[1])) }
         case "size":
             let n = (argument ?? "").split(separator: ",").compactMap { Double($0) }
             if n.count == 2 { panel.setLiveSurfaceSize(CGSize(width: n[0], height: n[1])) }

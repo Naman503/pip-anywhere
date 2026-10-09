@@ -152,3 +152,65 @@ final class GeometryTests: XCTestCase {
         XCTAssertEqual(f.width / f.height, 2000 / 1125, accuracy: 0.001)
     }
 }
+
+final class ContentBlockerTests: XCTestCase {
+    private func trigger(_ rule: [String: Any]) -> [String: Any] { rule["trigger"] as! [String: Any] }
+    private func action(_ rule: [String: Any]) -> String { (rule["action"] as! [String: Any])["type"] as! String }
+
+    func testDomainAnchorBecomesHostRegex() {
+        let r = ContentBlocker.convert(["||ads.example.com^"])
+        XCTAssertEqual(r.network.count, 1)
+        let filter = trigger(r.network[0])["url-filter"] as! String
+        XCTAssertEqual(filter, "^[^:]+://+([^:/]+\\.)?ads\\.example\\.com([/:?=&].*)?$")
+        let regex = try! NSRegularExpression(pattern: filter)
+        func matches(_ url: String) -> Bool { regex.firstMatch(in: url, range: NSRange(url.startIndex..., in: url)) != nil }
+        XCTAssertTrue(matches("https://ads.example.com/banner.js"))
+        XCTAssertTrue(matches("https://cdn.ads.example.com/x"))
+        XCTAssertFalse(matches("https://ads.example.community/x"))
+        XCTAssertFalse(matches("https://example.com/ads.example.com"))
+        XCTAssertEqual(action(r.network[0]), "block")
+    }
+
+    func testExceptionsComeAfterBlocks() {
+        let r = ContentBlocker.convert(["@@||example.com/ads.js$script", "||example.com^"])
+        XCTAssertEqual(r.network.map(action), ["block", "ignore-previous-rules"])
+        XCTAssertEqual(trigger(r.network[1])["resource-type"] as! [String], ["script"])
+    }
+
+    func testOptions() {
+        let r = ContentBlocker.convert(["||tracker.net^$third-party,domain=a.com|b.org"])
+        let t = trigger(r.network[0])
+        XCTAssertEqual(t["load-type"] as! [String], ["third-party"])
+        XCTAssertEqual(t["if-domain"] as! [String], ["*a.com", "*b.org"])
+        let excluded = trigger(ContentBlocker.convert(["||x.com^$domain=~safe.com"]).network[0])
+        XCTAssertEqual(excluded["unless-domain"] as! [String], ["*safe.com"])
+    }
+
+    func testUnsupportedRulesAreSkipped() {
+        let r = ContentBlocker.convert([
+            "! comment", "[Adblock Plus 2.0]", "/banner[0-9]+/", "||x.com^$csp=script-src", "||y.com^$redirect=noop.js",
+            "example.com#?#div:-abp-has(.ad)", "example.com##+js(nowebrtc)", "##div:has-text(Sponsored)", "ab",
+        ])
+        XCTAssertTrue(r.network.isEmpty)
+        XCTAssertTrue(r.cosmetic.isEmpty)
+        XCTAssertGreaterThan(r.skipped, 5)
+    }
+
+    func testElementHiding() {
+        let r = ContentBlocker.convert(["##.ad-banner", "##div[id^=\"google_ads\"]", "example.com,news.org##.promo", "~skip.com##.x"])
+        XCTAssertEqual(r.cosmetic.count, 2) // one generic group + one domain-specific rule
+        let generic = r.cosmetic.first { trigger($0)["if-domain"] == nil }!
+        XCTAssertEqual((generic["action"] as! [String: Any])["selector"] as! String, ".ad-banner, div[id^=\"google_ads\"]")
+        let specific = r.cosmetic.first { trigger($0)["if-domain"] != nil }!
+        XCTAssertEqual(trigger(specific)["if-domain"] as! [String], ["*example.com", "*news.org"])
+    }
+
+    func testAllFiltersAreValidRegex() {
+        let r = ContentBlocker.convert(["||a.com^", "|https://b.com/x|", "/ads/*/banner.", "&ad_type=", "||c.com/path?q=1$image"])
+        for rule in r.network {
+            let filter = trigger(rule)["url-filter"] as! String
+            XCTAssertNoThrow(try NSRegularExpression(pattern: filter), filter)
+        }
+        XCTAssertEqual(r.network.count, 5)
+    }
+}
