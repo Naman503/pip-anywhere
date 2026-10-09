@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/images/icon.png" width="128" height="128" alt="PiP Anywhere app icon">
+
 # PiP Anywhere
 
 **Picture-in-picture for Brave and Chrome that stays on top of _everything_ on your Mac: other desktops, full-screen apps, and desktop swipes.**
