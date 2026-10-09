@@ -24,6 +24,8 @@ final class LiveController {
         let window: WindowMover.Window
         /// Where the window was on the desktop; restored on unfloat.
         let original: CGRect
+        /// It was in native full screen; it goes back to full screen on unfloat.
+        let wasFullScreen: Bool
         /// Current frame on the stage (global top-left points).
         var frame: CGRect
     }
@@ -67,22 +69,63 @@ final class LiveController {
             log("live: stage not ready")
             return
         }
-        guard let window = WindowMover.mainWindow(of: app), let original = WindowMover.frame(of: window) else {
-            log("live: \(app.localizedName ?? "app") has no window to float")
+        let name = app.localizedName ?? "The app"
+        guard let window = WindowMover.mainWindow(of: app) else {
+            log("live: \(name) has no window to float")
+            stage.destroy()
+            return
+        }
+        // A native full-screen window can't be moved: take it out of full screen first
+        // (it goes back to full screen when unfloated).
+        let wasFullScreen = WindowMover.isFullScreen(window)
+        if wasFullScreen {
+            log("live: \(name) is in full screen; leaving full screen first")
+            WindowMover.setFullScreen(window, false)
+            for _ in 0..<40 where WindowMover.isFullScreen(window) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            try? await Task.sleep(for: .milliseconds(900)) // let the exit animation finish
+        }
+        guard let original = WindowMover.frame(of: window) else {
+            log("live: can't read \(name)'s window frame")
+            stage.destroy()
             return
         }
 
         // The window gets exactly the panel's surface size: the app lays itself out for
         // that size, and capture is 1:1 (sharp text, cursor speed unchanged).
         let work = stage.workArea
-        let wanted = Settings.liveSurfaceSize ?? Self.defaultSurfaceSize
+        // A floating window, not a second screen: at most 70% of the main screen.
+        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
+        let remembered = Settings.liveSurfaceSize ?? Self.defaultSurfaceSize
+        let wanted = CGSize(width: min(remembered.width, screen.width * 0.7), height: min(remembered.height, screen.height * 0.7))
         let size = CGSize(width: min(max(wanted.width, PanelController.liveMinSize.width), work.width),
                           height: min(max(wanted.height, PanelController.liveMinSize.height), work.height))
         WindowMover.setFrame(window, CGRect(origin: work.origin, size: size))
         try? await Task.sleep(for: .milliseconds(150))
-        let frame = WindowMover.frame(of: window) ?? CGRect(origin: work.origin, size: size)
+        let frame = WindowMover.frame(of: window) ?? .zero
 
-        session = Session(app: app, window: window, original: original, frame: frame)
+        // Never capture a window that didn't make it onto the stage.
+        guard stage.bounds.contains(CGPoint(x: frame.midX, y: frame.midY)) else {
+            log("live: \(name)'s window didn't move to the stage (it's at \(frame.integral)); giving up")
+            if wasFullScreen { WindowMover.setFullScreen(window, true) }
+            stage.destroy()
+            model.live = LiveInfo(appName: name, title: window.title, icon: app.icon,
+                                  notice: "macOS didn't let \(name)'s window move. Try again, or un-tile it first.")
+            panel.enterLiveMode(contentSize: CGSize(width: 520, height: 160))
+            panel.show()
+            Task {
+                try? await Task.sleep(for: .seconds(4))
+                if self.session == nil, self.model.live?.notice != nil {
+                    self.model.live = nil
+                    self.panel.exitLiveMode()
+                    self.panel.hide()
+                }
+            }
+            return
+        }
+
+        session = Session(app: app, window: window, original: original, wasFullScreen: wasFullScreen, frame: frame)
         bridge.targetPID = app.processIdentifier
         model.live = LiveInfo(appName: app.localizedName ?? "App", title: window.title, icon: app.icon)
         panel.enterLiveMode(contentSize: frame.size)
@@ -108,7 +151,13 @@ final class LiveController {
         bridge.deactivate()
         watchdog?.invalidate()
         await capture.stop()
-        if WindowMover.isAlive(s.window) { WindowMover.setFrame(s.window, s.original) }
+        if WindowMover.isAlive(s.window) {
+            WindowMover.setFrame(s.window, s.original)
+            if s.wasFullScreen {
+                try? await Task.sleep(for: .milliseconds(300))
+                WindowMover.setFullScreen(s.window, true)
+            }
+        }
         model.live = nil
         model.liveCursor = nil
         model.liveCaptured = false

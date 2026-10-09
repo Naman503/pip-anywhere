@@ -66,6 +66,16 @@ enum WindowMover {
         return true
     }
 
+    /// Native full-screen windows live in their own Space and can't be moved.
+    static func isFullScreen(_ window: Window) -> Bool {
+        (copy(window.element, "AXFullScreen") as Bool?) ?? false
+    }
+
+    @discardableResult
+    static func setFullScreen(_ window: Window, _ on: Bool) -> Bool {
+        AXUIElementSetAttributeValue(window.element, "AXFullScreen" as CFString, (on ? kCFBooleanTrue : kCFBooleanFalse)!) == .success
+    }
+
     static func isAlive(_ window: Window) -> Bool {
         (copy(window.element, kAXRoleAttribute) as String?) != nil
     }

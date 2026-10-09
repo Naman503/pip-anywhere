@@ -19,6 +19,13 @@ const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir()
 });
 const page = context.pages()[0] ?? (await context.newPage());
 await page.goto('file://' + resolve('spikes/live/testpage.html'));
+// WINDOW_STATE=maximized|fullscreen puts the window in that state (to test moving it).
+if (process.env.WINDOW_STATE) {
+  const cdp = await context.newCDPSession(page);
+  const { windowId } = await cdp.send('Browser.getWindowForTarget');
+  await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: process.env.WINDOW_STATE } });
+  await new Promise((r) => setTimeout(r, 1500));
+}
 const pid = execSync('pgrep -n -x "Google Chrome for Testing"').toString().trim();
 console.log(JSON.stringify({ ready: true, pid: Number(pid) }));
 
