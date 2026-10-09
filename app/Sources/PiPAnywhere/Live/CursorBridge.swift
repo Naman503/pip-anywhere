@@ -48,7 +48,8 @@ final class CursorBridge {
 
     /// The pointer entered the panel's live surface at `local` (surface points).
     func enter(at local: CGPoint) {
-        guard !isCaptured, Date().timeIntervalSince(lastExit) > 0.15 else { return }
+        // Not while a mouse button is down: that's a drag or resize of the panel itself.
+        guard !isCaptured, NSEvent.pressedMouseButtons == 0, Date().timeIntervalSince(lastExit) > 0.15 else { return }
         let window = stageWindowRect()
         guard window.width > 0 else { return }
         let front = NSWorkspace.shared.frontmostApplication

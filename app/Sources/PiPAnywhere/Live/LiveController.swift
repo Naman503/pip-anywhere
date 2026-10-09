@@ -9,6 +9,16 @@ final class LiveController {
     let stage = Stage()
     let capture: StageCapture
     let bridge = CursorBridge()
+    /// The cursor drawn over the floated app (the real one is on the stage). A plain layer
+    /// moved directly on every mouse move: no SwiftUI re-render per event.
+    let cursorLayer: CALayer
+
+    static func makeCursorLayer() -> CALayer {
+        let layer = CALayer()
+        layer.isHidden = true
+        layer.zPosition = 10
+        return layer
+    }
 
     private let model: PlayerModel
     private let panel: PanelController
@@ -18,6 +28,7 @@ final class LiveController {
     private var fpsCap = 0
     private var fpsOverride: Int?
     private var lastStatsLog = Date.distantPast
+    private var missedChecks = 0
 
     private struct Session {
         let app: NSRunningApplication
@@ -26,26 +37,32 @@ final class LiveController {
         let original: CGRect
         /// It was in native full screen; it goes back to full screen on unfloat.
         let wasFullScreen: Bool
+        /// The window was opened just for floating (⌃⌥N): closing the float closes it.
+        /// Otherwise it was the user's own window and goes back where it was.
+        let owned: Bool
         /// Current frame on the stage (global top-left points).
         var frame: CGRect
     }
 
     static let defaultSurfaceSize = CGSize(width: 1000, height: 660)
 
-    init(model: PlayerModel, panel: PanelController, capture: StageCapture) {
+    init(model: PlayerModel, panel: PanelController, capture: StageCapture, cursorLayer: CALayer) {
         self.model = model
         self.panel = panel
         self.capture = capture
+        self.cursorLayer = cursorLayer
         bridge.surfaceRect = { [unowned panel] in panel.liveSurfaceRect }
         bridge.stageWindowRect = { [unowned self] in session?.frame ?? .zero }
         bridge.stageBounds = { [unowned self] in stage.bounds }
-        bridge.onCursor = { [unowned model] in model.liveCursor = $0 }
+        bridge.onCursor = { [unowned self] in showCursor(at: $0) }
         bridge.onCaptureChange = { [unowned self] captured in
             model.liveCaptured = captured
             applyFrameRateCap()
         }
         capture.onStats = { [unowned self] in statsUpdated($0) }
         panel.onLiveResize = { [unowned self] in resize(to: $0) }
+        panel.stageScreen = { [unowned self] in stage.screen }
+        panel.liveMaxSurfaceSize = { [unowned self] in stage.isActive ? stage.workArea.size : nil }
         model.$isStashed.dropFirst().sink { [unowned self] stashed in
             if stashed { bridge.release() }
             DispatchQueue.main.async { self.applyFrameRateCap() }
@@ -62,7 +79,64 @@ final class LiveController {
         await float(app)
     }
 
-    func float(_ app: NSRunningApplication) async {
+    // MARK: A new browser window, just for floating (⌃⌥N)
+
+    /// Chromium browsers accept "--new-window" from a second launch and hand it to the
+    /// running browser, so a fresh window opens in the user's own profile, with their
+    /// extensions and ad blocking.
+    static let floatableBrowsers = ["com.brave.Browser", "com.google.Chrome", "com.microsoft.edgemac",
+                                    "com.vivaldi.Vivaldi", "org.chromium.Chromium"]
+
+    static var preferredBrowser: String? {
+        floatableBrowsers.first { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil }
+    }
+
+    /// ⌃⌥N: float a new browser window, or close it if one is already floating.
+    func toggleNewBrowserWindow() async {
+        if let s = session, s.owned {
+            await unfloat()
+        } else if let browser = Self.preferredBrowser {
+            await floatNewWindow(bundleID: browser)
+        } else {
+            log("live: no Chromium browser (Brave, Chrome, Edge…) installed")
+        }
+    }
+
+    func floatNewWindow(bundleID: String) async {
+        guard permissionsGranted(prompt: true),
+              let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
+        if session != nil { await unfloat() }
+        let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
+        let before = existing.map(WindowMover.windowIDs(of:)) ?? []
+
+        let config = NSWorkspace.OpenConfiguration()
+        config.arguments = ["--new-window"]
+        config.activates = false
+        // A second instance passes "--new-window" to the running browser, then exits.
+        config.createsNewApplicationInstance = existing != nil
+        let launched: NSRunningApplication
+        do {
+            launched = try await NSWorkspace.shared.openApplication(at: appURL, configuration: config)
+        } catch {
+            log("live: couldn't open a new window: \(error)")
+            return
+        }
+        let app = existing ?? launched
+        // Wait for the new window (a cold start can take a few seconds).
+        for _ in 0..<160 {
+            try? await Task.sleep(for: .milliseconds(50))
+            if let window = WindowMover.standardWindows(of: app).first(where: { $0.windowID.map { !before.contains($0) } ?? false }) {
+                log("live: new \(app.localizedName ?? "browser") window \(window.windowID ?? 0) opened for floating")
+                await float(app, window: window, owned: true)
+                return
+            }
+        }
+        log("live: no new window appeared in \(app.localizedName ?? bundleID)")
+    }
+
+    // MARK: Float any window
+
+    func float(_ app: NSRunningApplication, window chosen: WindowMover.Window? = nil, owned: Bool = false) async {
         if session != nil { await unfloat() }
         guard permissionsGranted(prompt: true) else { return }
         guard stage.create(), await waitForStage(), let displayID = stage.displayID else {
@@ -70,7 +144,7 @@ final class LiveController {
             return
         }
         let name = app.localizedName ?? "The app"
-        guard let window = WindowMover.mainWindow(of: app) else {
+        guard let window = chosen ?? WindowMover.mainWindow(of: app) else {
             log("live: \(name) has no window to float")
             stage.destroy()
             return
@@ -125,7 +199,8 @@ final class LiveController {
             return
         }
 
-        session = Session(app: app, window: window, original: original, wasFullScreen: wasFullScreen, frame: frame)
+        session = Session(app: app, window: window, original: original, wasFullScreen: wasFullScreen, owned: owned, frame: frame)
+        missedChecks = 0
         bridge.targetPID = app.processIdentifier
         model.live = LiveInfo(appName: app.localizedName ?? "App", title: window.title, icon: app.icon)
         panel.enterLiveMode(contentSize: frame.size)
@@ -152,20 +227,25 @@ final class LiveController {
         watchdog?.invalidate()
         await capture.stop()
         if WindowMover.isAlive(s.window) {
-            WindowMover.setFrame(s.window, s.original)
-            if s.wasFullScreen {
-                try? await Task.sleep(for: .milliseconds(300))
-                WindowMover.setFullScreen(s.window, true)
+            if s.owned {
+                // Opened just for floating: closing the float closes it.
+                WindowMover.close(s.window)
+            } else {
+                WindowMover.setFrame(s.window, s.original)
+                if s.wasFullScreen {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    WindowMover.setFullScreen(s.window, true)
+                }
             }
         }
         model.live = nil
-        model.liveCursor = nil
+        showCursor(at: nil)
         model.liveCaptured = false
         Settings.liveSurfaceSize = panel.liveSurfaceSize
         panel.exitLiveMode()
         panel.hide()
         stage.destroy()
-        log("live: returned window to \(s.original.integral)")
+        log(s.owned ? "live: closed the floating window" : "live: returned window to \(s.original.integral)")
     }
 
     /// The panel was resized: resize the real window to match (the app re-lays out).
@@ -186,15 +266,15 @@ final class LiveController {
 
     // MARK: Energy governor
 
-    /// 60 fps while you're using it, 15 when visible but idle, ~1 when slid away or hidden.
-    /// Unchanged frames are skipped by ScreenCaptureKit at any cap.
+    /// Up to 60 fps whenever visible (video and scrolling must stay smooth even when you're
+    /// only watching); ~1 when slid away or hidden. Unchanged frames are skipped by
+    /// ScreenCaptureKit at any cap, so a still app costs almost nothing either way.
     private func applyFrameRateCap() {
         guard session != nil else { return }
         let cap: Int
         if let fpsOverride { cap = fpsOverride }
         else if model.isStashed || !panel.isVisible { cap = 1 }
-        else if model.liveCaptured { cap = 60 }
-        else { cap = 15 }
+        else { cap = 60 }
         guard cap != fpsCap else { return }
         fpsCap = cap
         Task { await capture.update(fps: cap) }
@@ -220,13 +300,17 @@ final class LiveController {
 
     private func checkSession() {
         guard var s = session else { return }
-        if s.app.isTerminated || !WindowMover.isAlive(s.window) {
+        // Only "gone" counts, and twice in a row: a busy app can briefly not answer.
+        let liveness = s.app.isTerminated ? .gone : WindowMover.liveness(s.window)
+        missedChecks = liveness == .gone ? missedChecks + 1 : 0
+        if liveness != .alive && missedChecks < 2 { return }
+        if missedChecks >= 2 {
             model.live?.notice = "\(s.app.localizedName ?? "The app") closed"
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
                 await self.unfloat()
             }
-            session = nil
+            watchdog?.invalidate()
             return
         }
         if let frame = WindowMover.frame(of: s.window), frame != s.frame {
@@ -237,6 +321,25 @@ final class LiveController {
             }
             Task { await capture.update(sourceRect: stageLocal(frame)) }
         }
+    }
+
+    // MARK: Cursor overlay
+
+    private func showCursor(at point: CGPoint?) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        if let point {
+            let cursor = NSCursor.currentSystem ?? .arrow
+            let image = cursor.image
+            if cursorLayer.contents as AnyObject? !== image { cursorLayer.contents = image }
+            cursorLayer.bounds = CGRect(origin: .zero, size: image.size)
+            cursorLayer.anchorPoint = CGPoint(x: cursor.hotSpot.x / max(image.size.width, 1), y: cursor.hotSpot.y / max(image.size.height, 1))
+            cursorLayer.position = point
+            cursorLayer.isHidden = false
+        } else {
+            cursorLayer.isHidden = true
+        }
+        CATransaction.commit()
     }
 
     // MARK: Helpers
@@ -286,6 +389,8 @@ final class LiveController {
             } else {
                 log("live: no running app matches '\(argument ?? "")'")
             }
+        case "newwindow":
+            Task { await toggleNewBrowserWindow() }
         case "unfloat":
             Task { await unfloat() }
         case "size":

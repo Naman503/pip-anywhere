@@ -7,10 +7,20 @@ import CVirtualDisplay
 /// the real screens.
 @MainActor
 final class Stage {
-    /// Looks-like size of the stage in points; HiDPI doubles the pixels.
-    static let size = CGSize(width: 1600, height: 1000)
+    /// Looks-like size of the stage in points (HiDPI doubles the pixels). Big enough that a
+    /// floated app can be as large as the biggest real screen, plus the stage's own menu-bar
+    /// strip and margins. Only the floated window's area is ever drawn, so size is cheap.
+    private(set) var size = CGSize(width: 1600, height: 1000)
 
     private var display: PAVirtualDisplay?
+
+    private static func sizeForScreens() -> CGSize {
+        let largest = NSScreen.screens.reduce(CGSize(width: 1280, height: 800)) {
+            CGSize(width: max($0.width, $1.frame.width), height: max($0.height, $1.frame.height))
+        }
+        let round16 = { (v: CGFloat) in (v / 16).rounded(.up) * 16 }
+        return CGSize(width: round16(largest.width + 96), height: round16(largest.height + 176))
+    }
 
     var displayID: CGDirectDisplayID? { display?.displayID }
     var isActive: Bool { display != nil }
@@ -24,7 +34,7 @@ final class Stage {
             return false
         }
         let mainBefore = CGMainDisplayID()
-        let size = Self.size
+        size = Self.sizeForScreens()
         display = PAVirtualDisplay(
             name: "PiP Anywhere Stage",
             maxPixels: CGSize(width: size.width * 2, height: size.height * 2),

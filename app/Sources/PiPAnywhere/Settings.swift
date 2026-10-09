@@ -83,17 +83,6 @@ enum Settings {
         set { defaults.set(newValue, forKey: "pauseWhenStashed") }
     }
 
-    /// Floating browser: open tabs (restored on next open) and window size.
-    static var browserTabs: [String] {
-        get { defaults.stringArray(forKey: "browserTabs") ?? [] }
-        set { defaults.set(newValue, forKey: "browserTabs") }
-    }
-
-    static var browserSize: CGSize? {
-        get { defaults.string(forKey: "browserSize").map(NSSizeFromString).flatMap { $0.width > 0 ? $0 : nil } }
-        set { defaults.set(newValue.map(NSStringFromSize), forKey: "browserSize") }
-    }
-
     /// Size of the last live app surface (restored next time).
     static var liveSurfaceSize: CGSize? {
         get { defaults.string(forKey: "liveSurfaceSize").map(NSSizeFromString).flatMap { $0.width > 0 ? $0 : nil } }

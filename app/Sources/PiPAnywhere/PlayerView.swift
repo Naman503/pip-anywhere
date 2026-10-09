@@ -16,8 +16,6 @@ struct PanelActions {
     var liveHover: (CGPoint) -> Void = { _ in }
     /// Live apps: put the window back on the desktop and stop floating it.
     var liveReturn: () -> Void = {}
-    /// Floating browser: hand a page to the user's default browser.
-    var openInBrowser: (URL) -> Void = { NSWorkspace.shared.open($0) }
 }
 
 /// Video + hover controls + stash handle, or a live app.
@@ -25,7 +23,7 @@ struct PlayerView: View {
     @ObservedObject var model: PlayerModel
     let videoLayer: CALayer
     let liveLayer: CALayer
-    let browser: BrowserModel
+    let cursorLayer: CALayer
     let actions: PanelActions
 
     @State private var scrubTime: Double?
@@ -35,10 +33,8 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        if model.browserActive {
-            BrowserView(model: model, browser: browser, actions: actions, openInBrowser: actions.openInBrowser)
-        } else if let live = model.live {
-            LiveView(model: model, live: live, layer: liveLayer, actions: actions)
+        if let live = model.live {
+            LiveView(model: model, live: live, layer: liveLayer, cursorLayer: cursorLayer, actions: actions)
         } else {
             videoBody
         }
@@ -344,11 +340,12 @@ struct ResizeHandles: View {
 
 /// A live app: slim title bar (drag to move) above the app's live surface.
 struct LiveView: View {
-    static let barHeight: CGFloat = 26
+    static let barHeight: CGFloat = 30
 
     @ObservedObject var model: PlayerModel
     let live: LiveInfo
     let layer: CALayer
+    let cursorLayer: CALayer
     let actions: PanelActions
 
     var body: some View {
@@ -366,15 +363,17 @@ struct LiveView: View {
                             .background(.black.opacity(0.7), in: Capsule())
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    if let p = model.liveCursor, !model.isStashed {
-                        LiveCursor(point: p)
-                    }
-                    // Hover here hands the real cursor over to the app on the stage.
+                    CursorOverlay(cursorLayer: cursorLayer)
+                    // Hover here hands the real cursor over to the app on the stage. Inset by
+                    // the resize zones, so the edges stay resize handles.
                     if !model.isStashed && !model.ghost {
                         Color.clear
                             .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                if case let .active(location) = phase { actions.liveHover(location) }
+                            .padding(ResizeZones.live.edge)
+                            .onContinuousHover(coordinateSpace: .local) { phase in
+                                if case let .active(location) = phase {
+                                    actions.liveHover(CGPoint(x: location.x + ResizeZones.live.edge, y: location.y + ResizeZones.live.edge))
+                                }
                             }
                     }
                 }
@@ -394,6 +393,10 @@ struct LiveView: View {
 
     private var bar: some View {
         HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.45))
+                .help("Drag to move")
             if let icon = live.icon {
                 Image(nsImage: icon).resizable().frame(width: 15, height: 15)
             }
@@ -406,7 +409,8 @@ struct LiveView: View {
             }
             Spacer(minLength: 4)
             IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥P)", action: actions.toggleStash)
-            IconButton(symbol: "rectangle.portrait.and.arrow.right", size: 11, help: "Put the window back on the desktop", action: actions.liveReturn)
+            IconButton(symbol: "rectangle.portrait.and.arrow.right", size: 11,
+                       help: "Stop floating: a window opened for floating closes, your own window goes back", action: actions.liveReturn)
             IconButton(symbol: "xmark", size: 11, help: "Close", action: actions.close)
         }
         .padding(.horizontal, 8)
@@ -414,26 +418,40 @@ struct LiveView: View {
         .frame(maxWidth: .infinity)
         .background(Color(white: 0.13))
         .contentShape(Rectangle())
+        // The whole bar is the drag handle (open hand → closed hand while dragging).
+        .onContinuousHover { phase in
+            if case .active = phase, NSEvent.pressedMouseButtons == 0 { NSCursor.openHand.set() }
+        }
         .gesture(
-            DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                .onChanged { _ in actions.dragChanged() }
-                .onEnded { _ in actions.dragEnded() }
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { _ in
+                    NSCursor.closedHand.set()
+                    actions.dragChanged()
+                }
+                .onEnded { _ in
+                    NSCursor.openHand.set()
+                    actions.dragEnded()
+                }
         )
-        .onTapGesture(count: 2) { actions.toggleZoom() }
     }
 }
 
-/// Draws the system's current cursor (arrow, I-beam, hand…) where the real cursor is on the stage.
-private struct LiveCursor: View {
-    let point: CGPoint
+/// Hosts the cursor layer the live controller moves directly (top-left coordinates).
+private struct CursorOverlay: NSViewRepresentable {
+    let cursorLayer: CALayer
 
-    var body: some View {
-        let cursor = NSCursor.currentSystem ?? NSCursor.arrow
-        let image = cursor.image
-        Image(nsImage: image)
-            .frame(width: image.size.width, height: image.size.height)
-            .offset(x: point.x - cursor.hotSpot.x, y: point.y - cursor.hotSpot.y)
-            .allowsHitTesting(false)
+    func makeNSView(context: Context) -> FlippedView {
+        let view = FlippedView()
+        view.wantsLayer = true
+        view.layer?.addSublayer(cursorLayer)
+        return view
+    }
+
+    func updateNSView(_ nsView: FlippedView, context: Context) {}
+
+    final class FlippedView: NSView {
+        override var isFlipped: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 

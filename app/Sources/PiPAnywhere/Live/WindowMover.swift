@@ -20,6 +20,27 @@ enum WindowMover {
         return AXIsProcessTrustedWithOptions([key: prompt] as CFDictionary)
     }
 
+    /// All of the app's standard windows.
+    static func standardWindows(of app: NSRunningApplication) -> [Window] {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let all: [AXUIElement] = copy(appElement, kAXWindowsAttribute) ?? []
+        return all.filter { (copy($0, kAXSubroleAttribute) as String?) == kAXStandardWindowSubrole }.map {
+            Window(element: $0, pid: app.processIdentifier, windowID: windowID(of: $0),
+                   appName: app.localizedName ?? "App", title: copy($0, kAXTitleAttribute) ?? "")
+        }
+    }
+
+    static func windowIDs(of app: NSRunningApplication) -> Set<CGWindowID> {
+        Set(standardWindows(of: app).compactMap(\.windowID))
+    }
+
+    /// Clicks the window's close button (like the user would).
+    @discardableResult
+    static func close(_ window: Window) -> Bool {
+        guard let button: AXUIElement = copy(window.element, kAXCloseButtonAttribute) else { return false }
+        return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
+    }
+
     /// The app's focused / main / first standard window.
     static func mainWindow(of app: NSRunningApplication) -> Window? {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
@@ -76,9 +97,20 @@ enum WindowMover {
         AXUIElementSetAttributeValue(window.element, "AXFullScreen" as CFString, (on ? kCFBooleanTrue : kCFBooleanFalse)!) == .success
     }
 
-    static func isAlive(_ window: Window) -> Bool {
-        (copy(window.element, kAXRoleAttribute) as String?) != nil
+    enum Liveness { case alive, gone, unknown }
+
+    /// `.gone` only when macOS says the window no longer exists. A busy app (e.g. while
+    /// it re-lays out during a resize) can time out; that is `.unknown`, not closed.
+    static func liveness(_ window: Window) -> Liveness {
+        var value: CFTypeRef?
+        switch AXUIElementCopyAttributeValue(window.element, kAXRoleAttribute as CFString, &value) {
+        case .success: return .alive
+        case .invalidUIElement: return .gone
+        default: return .unknown
+        }
     }
+
+    static func isAlive(_ window: Window) -> Bool { liveness(window) != .gone }
 
     // MARK: Private
 
