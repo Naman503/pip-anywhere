@@ -1,0 +1,5 @@
+# Private key for packing the extension as .crx. Never commit.
+.keys/
+node_modules/
+dist/
+test-results/

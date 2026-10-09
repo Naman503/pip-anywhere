@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PiP Anywhere: pipeline test</title>
+    <style>
+      body { font: 14px system-ui, sans-serif; margin: 24px; background: #111; color: #eee; }
+      canvas { width: 640px; max-width: 100%; border-radius: 8px; display: block; margin: 12px 0; }
+      button { font: inherit; padding: 6px 14px; }
+    </style>
+  </head>
+  <body>
+    <h1>Pipeline test</h1>
+    <p>Streams this animation to the PiP Anywhere app through the same encoder as real videos. The app must be running.</p>
+    <canvas width="1280" height="720"></canvas>
+    <button>Start</button> <span id="status"></span>
+    <script src="test-page.js"></script>
+  </body>
+</html>
