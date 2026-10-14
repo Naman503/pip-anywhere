@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PiP Anywhere",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pop any browser video into a floating window that stays visible on every desktop and over full-screen apps. Needs the PiP Anywhere Mac app.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtgucPXcMB6fLPVyXusF4QzTPrwTkhf4dKWXfzqJlcl9VxFgksqowJCJG91DXNcqVAUf5CW4ScbuoRProuBjCJLwcMo2gBmqhUdg3H+5BjKPdb3xuZPfvJdNhnGXr+TQnOTZhxsx+3JsiK4qwYDFeE5/0Sjoz++cRM4haA3zuxmGPmzS62b/nCqXzwv2IXmRm6yhvb7Avof/FSiX7W+L7ULB7hPVUaGAXCb46lJyyEZSBqiV+0PnxvXtgakEq5MXOtj5EyuHEJB4kzv70KhSU6IaBTbVb6WBc2Lu4dY/UjCS48skzu7ows+H+pw0CWXMbnINX8MeM08bvFI1Km/C7pwIDAQAB",
   "minimum_chrome_version": "116",

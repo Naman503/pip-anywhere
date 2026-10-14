@@ -2,7 +2,7 @@
 // page's own frame rate, visibility and the input it received. Used to measure Live Apps.
 // Usage: CHROMIUM_PATH=… node spikes/live/harness.mjs [seconds]   (run from repo root)
 import { createRequire } from 'node:module';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execSync } from 'node:child_process';
@@ -18,7 +18,10 @@ const context = await chromium.launchPersistentContext(mkdtempSync(join(tmpdir()
   args: ['--window-size=1100,760', '--window-position=120,120'],
 });
 const page = context.pages()[0] ?? (await context.newPage());
-await page.goto('file://' + resolve('spikes/live/testpage.html'));
+// Served at a neutral address (no local paths in the address bar or screenshots).
+await page.route('https://pip-anywhere.test/**', (route) =>
+  route.fulfill({ contentType: 'text/html', body: readFileSync(resolve('spikes/live/testpage.html'), 'utf8') }));
+await page.goto('https://pip-anywhere.test/live-apps');
 // WINDOW_STATE=maximized|fullscreen puts the window in that state (to test moving it).
 if (process.env.WINDOW_STATE) {
   const cdp = await context.newCDPSession(page);

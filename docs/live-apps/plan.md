@@ -8,7 +8,7 @@ The window must:
 - let you click, type, scroll, switch tabs and drag, exactly as in the real app;
 - cost almost nothing while nothing changes.
 
-Status: **planning**, 2026-10-09. Research:
+Status: **shipped as a beta in 0.4.0** (2026-10-15). What was built and measured is in [decisions.md](../decisions.md) (rounds 4–5). The phased plan below is kept as written. Research:
 - [research-technical.md](research-technical.md): how to build it.
 - [research-product.md](research-product.md): what exists, what users want, and pitfalls.
 
