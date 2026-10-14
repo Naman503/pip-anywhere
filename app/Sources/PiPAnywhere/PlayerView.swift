@@ -12,12 +12,19 @@ struct PanelActions {
     var toggleStash: () -> Void
     var toggleZoom: () -> Void
     var close: () -> Void
+    /// Live apps: pointer entered the live surface at a surface-local point.
+    var liveHover: (CGPoint) -> Void = { _ in }
+    /// Live apps: put the window back on the desktop and stop floating it.
+    var liveReturn: () -> Void = {}
 }
 
-/// Video + hover controls + stash handle.
+/// Video + hover controls + stash handle, or a live app.
 struct PlayerView: View {
     @ObservedObject var model: PlayerModel
     let videoLayer: CALayer
+    let liveLayer: CALayer
+    let cursorLayer: CALayer
+    let browser: BrowserModel
     let actions: PanelActions
 
     @State private var scrubTime: Double?
@@ -27,6 +34,16 @@ struct PlayerView: View {
     }
 
     var body: some View {
+        if model.browserActive {
+            BrowserView(model: model, browser: browser, actions: actions)
+        } else if let live = model.live {
+            LiveView(model: model, live: live, layer: liveLayer, cursorLayer: cursorLayer, actions: actions)
+        } else {
+            videoBody
+        }
+    }
+
+    private var videoBody: some View {
         ZStack {
             Color.black
             // Slid into the edge: the visible strip must not reveal the video.
@@ -55,7 +72,8 @@ struct PlayerView: View {
                 .allowsHitTesting(showControls)
                 .animation(.easeOut(duration: 0.15), value: showControls)
             if !model.isStashed && !model.ghost {
-                ResizeHandles(onChange: actions.resizeChanged, onEnd: actions.resizeEnded)
+                ResizeHandles(onChange: actions.resizeChanged, onEnd: actions.resizeEnded,
+                              edge: ResizeZones.video.edge, corner: ResizeZones.video.corner)
             }
             if model.isStashed {
                 StashHandle(edge: model.stashEdge, playing: !(model.playback?.paused ?? true) || model.testPattern)
@@ -188,7 +206,7 @@ private struct VideoSurface: NSViewRepresentable {
     }
 }
 
-private struct IconButton: View {
+struct IconButton: View {
     let symbol: String
     var size: CGFloat = 13
     let help: String
@@ -260,13 +278,39 @@ private struct SpeedMenu: View {
     }
 }
 
+/// Resize zone sizes; the hosting view uses the same numbers for the cursor.
+enum ResizeZones {
+    static let video = (edge: CGFloat(8), corner: CGFloat(18))
+    static let live = (edge: CGFloat(5), corner: CGFloat(14))
+}
+
+extension ResizeHandle {
+    var cursor: NSCursor {
+        if #available(macOS 15.0, *) {
+            let position: NSCursor.FrameResizePosition = switch self {
+            case [.top, .left]: .topLeft
+            case [.top, .right]: .topRight
+            case [.bottom, .left]: .bottomLeft
+            case [.bottom, .right]: .bottomRight
+            case .top: .top
+            case .bottom: .bottom
+            case .left: .left
+            default: .right
+            }
+            return NSCursor.frameResize(position: position, directions: .all)
+        }
+        if self == .left || self == .right { return .resizeLeftRight }
+        if self == .top || self == .bottom { return .resizeUpDown }
+        return .crosshair
+    }
+}
+
 /// Invisible grab zones along the edges and corners for resizing (aspect kept).
-private struct ResizeHandles: View {
+struct ResizeHandles: View {
     let onChange: (ResizeHandle) -> Void
     let onEnd: () -> Void
-
-    private let edge: CGFloat = 8
-    private let corner: CGFloat = 18
+    var edge: CGFloat = 8
+    var corner: CGFloat = 18
 
     var body: some View {
         GeometryReader { geo in
@@ -284,18 +328,10 @@ private struct ResizeHandles: View {
                     .contentShape(Rectangle())
                     .frame(width: size.width, height: size.height)
                     .position(x: x, y: y)
-                    // Set (not push/pop) on every move: AppKit resets the cursor as the
-                    // mouse moves over the rest of the window.
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active: cursor(for: handle).set()
-                        case .ended: NSCursor.arrow.set()
-                        }
-                    }
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)
                             .onChanged { _ in
-                                cursor(for: handle).set()
+                                handle.cursor.set()
                                 onChange(handle)
                             }
                             .onEnded { _ in onEnd() }
@@ -303,24 +339,122 @@ private struct ResizeHandles: View {
             }
         }
     }
+}
 
-    private func cursor(for handle: ResizeHandle) -> NSCursor {
-        if #available(macOS 15.0, *) {
-            let position: NSCursor.FrameResizePosition = switch handle {
-            case [.top, .left]: .topLeft
-            case [.top, .right]: .topRight
-            case [.bottom, .left]: .bottomLeft
-            case [.bottom, .right]: .bottomRight
-            case .top: .top
-            case .bottom: .bottom
-            case .left: .left
-            default: .right
+/// A live app: slim title bar (drag to move) above the app's live surface.
+struct LiveView: View {
+    static let barHeight: CGFloat = 30
+
+    @ObservedObject var model: PlayerModel
+    let live: LiveInfo
+    let layer: CALayer
+    let cursorLayer: CALayer
+    let actions: PanelActions
+
+    var body: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                bar
+                ZStack(alignment: .topLeading) {
+                    VideoSurface(videoLayer: layer, blurred: model.isStashed)
+                    if model.isStashed { Color.black.opacity(0.35) }
+                    if let notice = live.notice {
+                        Text(notice)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .background(.black.opacity(0.7), in: Capsule())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    CursorOverlay(cursorLayer: cursorLayer)
+                    // Hover here hands the real cursor over to the app on the stage. Inset by
+                    // the resize zones, so the edges stay resize handles.
+                    if !model.isStashed && !model.ghost {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .padding(ResizeZones.live.edge)
+                            .onContinuousHover(coordinateSpace: .local) { phase in
+                                if case let .active(location) = phase {
+                                    actions.liveHover(CGPoint(x: location.x + ResizeZones.live.edge, y: location.y + ResizeZones.live.edge))
+                                }
+                            }
+                    }
+                }
             }
-            return NSCursor.frameResize(position: position, directions: .all)
+            if model.isStashed {
+                StashHandle(edge: model.stashEdge, playing: true)
+                    .contentShape(Rectangle())
+                    .onTapGesture { actions.toggleStash() }
+            } else if !model.ghost {
+                ResizeHandles(onChange: actions.resizeChanged, onEnd: actions.resizeEnded,
+                              edge: ResizeZones.live.edge, corner: ResizeZones.live.corner)
+            }
         }
-        if handle == .left || handle == .right { return .resizeLeftRight }
-        if handle == .top || handle == .bottom { return .resizeUpDown }
-        return .crosshair
+        .background(Color.black)
+        .clipShape(RoundedRectangle(cornerRadius: model.isStashed ? 8 : 10, style: .continuous))
+    }
+
+    private var bar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.45))
+                .help("Drag to move")
+            if let icon = live.icon {
+                Image(nsImage: icon).resizable().frame(width: 15, height: 15)
+            }
+            Text(live.title.isEmpty ? live.appName : "\(live.appName) — \(live.title)")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(1)
+            if model.liveCaptured {
+                Circle().fill(Color.green).frame(width: 6, height: 6).help("You're controlling this app")
+            }
+            Spacer(minLength: 4)
+            IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥P)", action: actions.toggleStash)
+            IconButton(symbol: "rectangle.portrait.and.arrow.right", size: 11,
+                       help: "Stop floating: a window opened for floating closes, your own window goes back", action: actions.liveReturn)
+            IconButton(symbol: "xmark", size: 11, help: "Close", action: actions.close)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: Self.barHeight)
+        .frame(maxWidth: .infinity)
+        .background(Color(white: 0.13))
+        .contentShape(Rectangle())
+        // The whole bar is the drag handle (open hand → closed hand while dragging).
+        .onContinuousHover { phase in
+            if case .active = phase, NSEvent.pressedMouseButtons == 0 { NSCursor.openHand.set() }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { _ in
+                    NSCursor.closedHand.set()
+                    actions.dragChanged()
+                }
+                .onEnded { _ in
+                    NSCursor.openHand.set()
+                    actions.dragEnded()
+                }
+        )
+    }
+}
+
+/// Hosts the cursor layer the live controller moves directly (top-left coordinates).
+private struct CursorOverlay: NSViewRepresentable {
+    let cursorLayer: CALayer
+
+    func makeNSView(context: Context) -> FlippedView {
+        let view = FlippedView()
+        view.wantsLayer = true
+        view.layer?.addSublayer(cursorLayer)
+        return view
+    }
+
+    func updateNSView(_ nsView: FlippedView, context: Context) {}
+
+    final class FlippedView: NSView {
+        override var isFlipped: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
@@ -347,7 +481,7 @@ private struct ProgressLine: View {
 }
 
 /// The strip left visible when the window is slid into a screen edge.
-private struct StashHandle: View {
+struct StashHandle: View {
     let edge: StashEdge
     let playing: Bool
 

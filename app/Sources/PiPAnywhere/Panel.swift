@@ -47,8 +47,23 @@ final class PanelController: NSObject, NSWindowDelegate {
     private var restingFrame: NSRect?
     /// Frame to go back to after a double-click zoom.
     private var unzoomedFrame: NSRect?
+    /// Live apps are any shape; videos keep their aspect ratio.
+    private var freeShape = false
+    /// Frame the video window had before switching to a live app.
+    private var videoFrame: NSRect?
+    /// Live apps: called with the live surface's new size after a resize.
+    var onLiveResize: ((CGSize) -> Void)?
+    /// Live apps: the hidden stage display. The window must never go onto it (it would
+    /// be invisible), and it isn't a "screen" for placement purposes.
+    var stageScreen: () -> NSScreen? = { nil }
+    /// Live apps: the largest surface the stage can hold.
+    var liveMaxSurfaceSize: () -> CGSize? = { nil }
+    private var liveResizeWork: DispatchWorkItem?
+    private var lastLiveResize = Date.distantPast
+    static let liveMinSize = CGSize(width: 320, height: 220)
 
-    init(model: PlayerModel, videoLayer: CALayer, actions: @escaping (PanelController) -> PanelActions) {
+    init(model: PlayerModel, videoLayer: CALayer, liveLayer: CALayer, cursorLayer: CALayer, browser: BrowserModel,
+         actions: @escaping (PanelController) -> PanelActions) {
         self.model = model
         let fallback = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let frame = Settings.savedFrame.map { PanelGeometry.keptOnScreen($0, in: Self.screenFrame(containing: $0)) }
@@ -56,9 +71,13 @@ final class PanelController: NSObject, NSWindowDelegate {
         panel = PiPPanel(contentRect: frame)
         super.init()
 
-        let hosting = PiPHostingView(rootView: PlayerView(model: model, videoLayer: videoLayer, actions: actions(self)))
+        let hosting = PiPHostingView(rootView: PlayerView(model: model, videoLayer: videoLayer, liveLayer: liveLayer, cursorLayer: cursorLayer, browser: browser, actions: actions(self)))
         hosting.sizingOptions = []
         hosting.onScroll = { [weak self] event in self?.scrolled(event) }
+        hosting.resizeZones = { [weak self] in
+            guard let self, !model.isStashed, !model.ghost else { return nil }
+            return freeShape ? ResizeZones.live : ResizeZones.video
+        }
         panel.contentView = hosting
         panel.contentAspectRatio = NSSize(width: 16, height: 9)
         panel.delegate = self
@@ -125,7 +144,9 @@ final class PanelController: NSObject, NSWindowDelegate {
         }
         guard let start = dragStart else { return }
         let mouse = NSEvent.mouseLocation
-        panel.setFrameOrigin(NSPoint(x: start.origin.x + mouse.x - start.mouse.x, y: start.origin.y + mouse.y - start.mouse.y))
+        var frame = panel.frame
+        frame.origin = NSPoint(x: start.origin.x + mouse.x - start.mouse.x, y: start.origin.y + mouse.y - start.mouse.y)
+        panel.setFrameOrigin(keptOffStage(frame).origin)
     }
 
     func dragEnded() {
@@ -141,6 +162,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func magnifyChanged(_ scale: CGFloat) {
+        if freeShape { return } // a pinch over a live app belongs to the app
         if magnifyStart == nil {
             magnifyStart = panel.frame
             unzoomedFrame = nil
@@ -158,12 +180,90 @@ final class PanelController: NSObject, NSWindowDelegate {
         guard let start = resizeStart, !model.isStashed else { return }
         let mouse = NSEvent.mouseLocation
         let delta = CGVector(dx: mouse.x - start.mouse.x, dy: mouse.y - start.mouse.y)
-        panel.setFrame(PanelGeometry.resized(start.frame, handle: handle, delta: delta, aspect: aspect, maxSize: screenFrame.size), display: true)
+        let frame = freeShape
+            ? PanelGeometry.resizedFree(start.frame, handle: handle, delta: delta,
+                                        minSize: CGSize(width: Self.liveMinSize.width, height: Self.liveMinSize.height + LiveView.barHeight),
+                                        maxSize: liveMaxFrameSize)
+            : PanelGeometry.resized(start.frame, handle: handle, delta: delta, aspect: aspect, maxSize: screenFrame.size)
+        // Never resize onto the stage (the window would vanish into it).
+        if let stage = stageScreen()?.frame, frame.intersects(stage) { return }
+        panel.setFrame(frame, display: true)
     }
 
     func resizeEnded() {
         resizeStart = nil
         settle(animated: true)
+    }
+
+    // MARK: Live apps
+
+    /// Switches the window to a free-shape live app whose surface is `contentSize`.
+    func enterLiveMode(contentSize: CGSize) {
+        if !freeShape { videoFrame = panel.frame }
+        freeShape = true
+        panel.resizeIncrements = NSSize(width: 1, height: 1) // clears the aspect-ratio lock
+        setLiveSurfaceSize(contentSize)
+    }
+
+    /// The floating browser: free shape, and any click makes the window take the keyboard
+    /// (without activating the app, so the app you were in stays in front).
+    func enterBrowserMode(size: CGSize) {
+        if !freeShape { videoFrame = panel.frame }
+        freeShape = true
+        panel.becomesKeyOnlyIfNeeded = false
+        panel.resizeIncrements = NSSize(width: 1, height: 1)
+        let frame = panel.frame
+        let target = NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
+        panel.setFrame(keptOffStage(PanelGeometry.clamped(target, in: visibleFrame)), display: true)
+    }
+
+    func focus() {
+        panel.makeKey()
+    }
+
+    func exitLiveMode() {
+        guard freeShape else { return }
+        panel.becomesKeyOnlyIfNeeded = true
+        freeShape = false
+        panel.contentAspectRatio = NSSize(width: aspect, height: 1)
+        if let videoFrame { panel.setFrame(videoFrame, display: true) }
+        videoFrame = nil
+    }
+
+    /// Resizes the window so the live surface is exactly `size` (keeps the top-left corner,
+    /// and keeps a live app fully on screen when it fits).
+    func setLiveSurfaceSize(_ size: CGSize) {
+        let frame = panel.frame
+        let limit = liveMaxFrameSize
+        let width = min(size.width, limit.width)
+        let height = min(size.height + LiveView.barHeight, limit.height)
+        let target = NSRect(x: frame.minX, y: frame.maxY - height, width: width, height: height)
+        let visible = visibleFrame
+        let fits = target.width <= visible.width && target.height <= visible.height
+        let placed = fits ? PanelGeometry.clamped(target, in: visible) : PanelGeometry.keptOnScreen(target, in: screenFrame)
+        panel.setFrame(keptOffStage(placed), display: true)
+    }
+
+    /// Largest live window: the real screen, and what the stage can hold.
+    private var liveMaxFrameSize: CGSize {
+        var size = screenFrame.size
+        if let surface = liveMaxSurfaceSize() {
+            size.width = min(size.width, surface.width)
+            size.height = min(size.height, surface.height + LiveView.barHeight)
+        }
+        return size
+    }
+
+    var liveSurfaceSize: CGSize {
+        CGSize(width: panel.frame.width, height: panel.frame.height - LiveView.barHeight)
+    }
+
+    /// The live surface in global top-left coordinates (what the cursor bridge maps from).
+    var liveSurfaceRect: CGRect {
+        let frame = panel.frame
+        let primaryTop = NSScreen.screens.first?.frame.maxY ?? frame.maxY
+        return CGRect(x: frame.minX, y: primaryTop - frame.maxY + LiveView.barHeight,
+                      width: frame.width, height: frame.height - LiveView.barHeight)
     }
 
     /// Grow (> 1) or shrink (< 1) around the centre, from the keyboard.
@@ -181,7 +281,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Double-click: switch between the current size and a large one (half the screen
     /// width), and back to exactly where it was.
     func toggleZoom() {
-        guard !model.isStashed else { return }
+        guard !model.isStashed, !freeShape else { return }
         if let previous = unzoomedFrame {
             unzoomedFrame = nil
             move(to: previous, animated: true)
@@ -204,6 +304,15 @@ final class PanelController: NSObject, NSWindowDelegate {
         Settings.savedFrame = target
     }
 
+    /// Same path as a drag (kept off the stage); for scripts and tests. AppKit coordinates.
+    func moveOrigin(to origin: NSPoint) {
+        var frame = panel.frame
+        frame.origin = origin
+        panel.setFrameOrigin(keptOffStage(frame).origin)
+        settle(animated: false)
+        log("window: asked for origin \(Int(origin.x)),\(Int(origin.y)) → placed at \(NSStringFromRect(panel.frame)) · stage \(stageScreen().map { NSStringFromRect($0.frame) } ?? "none")")
+    }
+
     func move(to corner: ScreenCorner) {
         if model.isStashed { leaveStash() }
         unzoomedFrame = nil
@@ -221,6 +330,24 @@ final class PanelController: NSObject, NSWindowDelegate {
         settle(animated: true)
     }
 
+    /// Any resize (our handles, the window edge, a preset) resizes a live app with it,
+    /// continuously while dragging and once more at the end.
+    func windowDidResize(_ notification: Notification) {
+        guard freeShape else { return }
+        liveResizeWork?.cancel()
+        if Date().timeIntervalSince(lastLiveResize) > 0.08 {
+            lastLiveResize = Date()
+            onLiveResize?(liveSurfaceSize)
+        }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            lastLiveResize = Date()
+            onLiveResize?(liveSurfaceSize)
+        }
+        liveResizeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
     /// Where the window rests after a drag or resize: snapped to a corner if that's
     /// on, otherwise exactly where it was left (only pulled back if almost gone).
     private func restingTarget(for frame: NSRect) -> NSRect {
@@ -232,7 +359,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     private func settle(animated: Bool) {
-        let target = restingTarget(for: panel.frame)
+        let target = keptOffStage(restingTarget(for: panel.frame))
         if target != panel.frame { move(to: target, animated: animated) }
         Settings.savedFrame = target
     }
@@ -279,7 +406,7 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private func scrolled(_ event: NSEvent) {
         // Momentum after lifting the fingers would overshoot.
-        guard Settings.scrollGestures, !model.isStashed, event.momentumPhase.isEmpty else { return }
+        guard Settings.scrollGestures, !model.isStashed, model.live == nil, !model.browserActive, event.momentumPhase.isEmpty else { return }
         // Physical finger/wheel direction, whatever the "natural scrolling" setting.
         let inverted = event.isDirectionInvertedFromDevice
         let dx = inverted ? event.scrollingDeltaX : -event.scrollingDeltaX // < 0: fingers moved left
@@ -307,32 +434,91 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     private var referenceFrame: NSRect { model.isStashed ? (restingFrame ?? panel.frame) : panel.frame }
 
-    /// Visible area (minus menu bar and Dock) of the screen the window is on.
-    private var visibleFrame: NSRect { Self.screen(containing: referenceFrame)?.visibleFrame ?? Self.fallback }
+    /// Visible area (minus menu bar and Dock) of the real screen the window is on.
+    private var visibleFrame: NSRect { Self.screen(containing: referenceFrame, excluding: stageScreen())?.visibleFrame ?? Self.fallback }
 
-    /// The whole screen the window is on.
-    private var screenFrame: NSRect { Self.screenFrame(containing: referenceFrame) }
+    /// The whole real screen the window is on.
+    private var screenFrame: NSRect { Self.screenFrame(containing: referenceFrame, excluding: stageScreen()) }
 
     private static let fallback = NSRect(x: 0, y: 0, width: 1440, height: 900)
 
-    private static func screenFrame(containing frame: NSRect) -> NSRect {
-        screen(containing: frame)?.frame ?? fallback
+    private static func screenFrame(containing frame: NSRect, excluding stage: NSScreen? = nil) -> NSRect {
+        screen(containing: frame, excluding: stage)?.frame ?? fallback
     }
 
-    private static func screen(containing frame: NSRect) -> NSScreen? {
+    /// The real screen holding most of `frame` (never the stage).
+    private static func screen(containing frame: NSRect, excluding stage: NSScreen? = nil) -> NSScreen? {
+        let screens = NSScreen.screens.filter { $0 != stage }
         let center = NSPoint(x: frame.midX, y: frame.midY)
-        return NSScreen.screens.first { $0.frame.contains(center) }
-            ?? NSScreen.screens.max { $0.frame.intersection(frame).area < $1.frame.intersection(frame).area }
+        return screens.first { $0.frame.contains(center) }
+            ?? screens.max { $0.frame.intersection(frame).area < $1.frame.intersection(frame).area }
             ?? NSScreen.main
+    }
+
+    /// A frame touching the stage display is clamped fully inside the nearest real screen.
+    /// Real screens never overlap the stage, so the result can't be on it.
+    private func keptOffStage(_ frame: NSRect) -> NSRect {
+        guard let stage = stageScreen()?.frame, frame.intersects(stage) else { return frame }
+        let screen = Self.screen(containing: frame.intersection(stage).isNull ? frame : frame, excluding: stageScreen())
+        return PanelGeometry.clamped(frame, in: screen?.visibleFrame ?? Self.fallback)
     }
 }
 
 /// Hosting view that hands scroll-wheel / two-finger scroll events to the controller.
 final class PiPHostingView: NSHostingView<PlayerView> {
     var onScroll: ((NSEvent) -> Void)?
+    /// Current resize zones (nil = none, e.g. while slid to the edge).
+    var resizeZones: () -> (edge: CGFloat, corner: CGFloat)? = { nil }
+    private var tracking: NSTrackingArea?
+    private var showingResizeCursor = false
 
     override func scrollWheel(with event: NSEvent) {
         onScroll?(event)
+    }
+
+    // The cursor is decided here, from the same zone geometry the drag handles use:
+    // a resize arrow only in an edge/corner zone, the normal arrow everywhere else.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        updateCursor(event)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateCursor(event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        NSCursor.arrow.set()
+        showingResizeCursor = false
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        updateCursor(event)
+    }
+
+    private func updateCursor(_ event: NSEvent) {
+        var p = convert(event.locationInWindow, from: nil)
+        if !isFlipped { p.y = bounds.height - p.y }
+        if let zones = resizeZones(), let handle = PanelGeometry.handle(at: p, in: bounds.size, edge: zones.edge, corner: zones.corner) {
+            handle.cursor.set()
+            showingResizeCursor = true
+        } else if showingResizeCursor {
+            // Leaving a resize zone: back to the arrow once; after that, views like the
+            // web page set their own cursors (I-beam, link hand).
+            NSCursor.arrow.set()
+            showingResizeCursor = false
+        }
     }
 }
 

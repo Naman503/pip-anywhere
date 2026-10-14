@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.4.0: 2026-10-15
+
+Two new things can float, next to video.
+
+### Added: Floating browser (`⌃⌥N`, no permissions)
+- A WebKit browser that lives entirely inside the floating window: tabs, address bar (a URL or a search), back/forward/reload, zoom, kept logins, tabs restored, and downloads.
+- **Built-in ad and tracker blocking.**
+  - EasyList and EasyPrivacy are converted to WebKit content rules (about 111k network and 10k element-hiding rules). They're compiled once and refreshed every 4 days.
+  - YouTube ads are skipped in the page.
+- **Web extensions** (macOS 15.4+): unpacked extensions in the Extensions folder load with the permissions they ask for.
+- "Open Brave's / Chrome's / Safari's current tab here", and send a page back to your browser.
+
+### Added: Live Apps (beta)
+- Float a real app window, fully usable, with genuine clicks and typing:
+  - `⌃⌥⇧N` opens a new Brave window just for floating; it closes with the float.
+  - `⌃⌥F` floats the app you're in; it goes back where it was.
+- The window lives on a hidden virtual display, so it never stops rendering. ScreenCaptureKit shows it zero-copy, and your real cursor is handed to it while you point at the floating window.
+- Resizing the floating window resizes the app. In full screen, the app fills the floating window.
+- Full-screen windows are taken out of full screen to float, and put back afterwards.
+- Up to 60 fps while visible, and about 1 fps when slid away.
+
+### Changed
+- The menu has three sections (Video, Floating browser, Live Apps). The status icon shows the mode.
+- Settings moved into a submenu. Shortcuts are grouped by mode.
+- A new app icon.
+- The resize arrow only shows in the edge and corner zones.
+- The floating window can never end up on the hidden display.
+- A log file is kept at `~/Library/Logs/PiP Anywhere/PiPAnywhere.log`.
+- `scripts/bundle.sh` takes an optional `SIGN_IDENTITY`, so Live Apps permissions survive rebuilds.
+
 ## 0.3.0: 2026-10-09
 
 ### Added

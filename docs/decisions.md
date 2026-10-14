@@ -49,3 +49,25 @@ The tests no longer touch a copy of the app you're running:
 | Too small to see | Minimum was 120 pt | Minimum width 200 pt | Shrinking stops at 200×113 |
 | Strip visible while stashed shows the video | – | Core Image Gaussian blur (radius 60) on the layer containing the video, plus a dark tint | On-screen capture: test-card text unreadable when stashed |
 | More options | – | Volume/mute (button, ⌃⌥M, scroll), scroll sideways to seek, double-click big/normal, size presets, move to corner, mute while stashed, progress line, shortcut list in the menu | e2e: volume 30%, mute, unmute reach the tab |
+
+## Round 4 (2026-10-09 → 15): Live Apps
+
+| Topic | Decision / finding | Evidence |
+|---|---|---|
+| Stage | Private `CGVirtualDisplay`, resolved at runtime through an Objective-C wrapper. HiDPI at 60 Hz, sized from the largest screen. | Created in < 300 ms; main display unchanged; no leftovers after 5 create/destroy cycles or `kill -9` |
+| Capture | ScreenCaptureKit display + app filter (menus and popups included), BGRA, IOSurface → `CALayer.contents`, idle frames skipped | A floated Chromium page held 60 fps and `visible`; 2000×1320 px for a 1000×660 window |
+| Input | The real cursor is warped onto the stage while the pointer is over the panel. The app is activated on hand-off, so its first click counts. Focus goes back on exit. | A trusted click reached the page; focus returned to the previous app |
+| Full-screen windows | Taken out of full screen to move (AX error −25200 otherwise, which surfaced as ScreenCaptureKit "invalid parameter"); put back on unfloat | Reproduced and fixed with a full-screen test window |
+| Lost window | Dragging or resizing could put the panel onto the stage display, where it's invisible. Anything touching the stage is now clamped into the nearest real screen. | Moves toward the stage all land on screen |
+| Full screen inside a float | The stage is resized live to the floating window while the app is in full screen | Stage 1904×1360 → 1260×766 → back; still removed cleanly |
+| Owned windows | `⌃⌥⇧N` opens a new browser window (`--new-window` handed to the running Chromium) that closes with the float | Brave 2 → 3 → 2 windows |
+| Smoothness | 60 fps cap whenever visible (15 had made video choppy); cursor overlay is a `CALayer`, not a SwiftUI re-render per mouse move | – |
+
+## Round 5 (2026-10-15): floating browser
+
+| Topic | Decision / finding | Evidence |
+|---|---|---|
+| Engine | WebKit inside the panel: no permissions, native input, resizing and cursors. A real Brave window remains available through Live Apps. | – |
+| Ad blocking | EasyList + EasyPrivacy → WebKit content rules via `PiPCore.ContentBlocker` (unit-tested). Unsupported syntax is skipped rather than risked. | 111,296 network + 10,310 hiding rules compile (28 s once, then cached); Google Ads, Analytics, DoubleClick and the Facebook pixel blocked |
+| YouTube ads | In-page skipper (mute, jump to the end, press Skip, remove ad slots) | An ad was playing; seconds later the main video was |
+| Extensions | `WKWebExtensionController` with unpacked extensions from the Extensions folder; requested permissions granted | BetterTube loads and runs (style injected, Shorts hidden) |

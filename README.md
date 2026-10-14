@@ -4,9 +4,10 @@
 
 # PiP Anywhere
 
-**Picture-in-picture for Brave and Chrome that stays on top of _everything_ on your Mac: other desktops, full-screen apps, and desktop swipes.**
+**A floating window for your Mac that stays on top of _everything_ (other desktops, full-screen apps, even mid-swipe) and can hold a video, a whole browser, or any app.**
 
 [![CI](https://github.com/Naman503/pip-anywhere/actions/workflows/ci.yml/badge.svg)](https://github.com/Naman503/pip-anywhere/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Naman503/pip-anywhere?color=F5566C)](https://github.com/Naman503/pip-anywhere/releases)
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple)
 ![Swift 6](https://img.shields.io/badge/Swift-6-F05138?logo=swift&logoColor=white)
 ![Chromium MV3](https://img.shields.io/badge/Chromium-Manifest%20V3-4285F4?logo=googlechrome&logoColor=white)
@@ -20,88 +21,126 @@
 
 ## Why
 
-Brave's and Chrome's built-in picture-in-picture **disappears as soon as you switch to an app in full-screen mode**. The window is a regular browser window, and macOS doesn't layer those over other apps' full-screen Spaces. The bug has been reported since 2020 and no browser setting fixes it.
+Brave's and Chrome's picture-in-picture **disappears as soon as you switch to an app in full-screen mode**. macOS doesn't layer an ordinary app's window over another app's full-screen Space. The bug has been open since 2020, and no browser setting fixes it.
 
-PiP Anywhere moves the video into a small native Mac window that:
+PiP Anywhere owns its floating window, so it can do what the browser's can't:
 
-- stays visible over full-screen apps;
-- stays on every desktop;
-- doesn't even move while you swipe between desktops with four fingers.
+- 🖥️ **Over full-screen apps.** Visible over Xcode, Keynote, a full-screen browser, anything.
+- 🧭 **On every desktop.** It doesn't even move while you swipe between desktops with four fingers.
+- 🎯 **Never steals focus.** The app you're working in stays in front.
 
-## Features
+## Three ways to use it
 
-**Always on top, everywhere**
-- Visible over native full-screen apps (Xcode, Safari, Keynote…) and on every desktop.
-- Stays perfectly still during four-finger desktop swipes; it doesn't slide out and back in.
-- Never steals focus from the app you're working in.
+| | 🎬 **Video** | 🌐 **Floating browser** | 🪟 **Live Apps** (beta) |
+|---|---|---|---|
+| **What floats** | The video from any tab in Brave or Chrome | A full browser with tabs, built in | Any real app window: your Brave, Slack, Terminal… |
+| **Start it** | `⌥⇧P` in the browser | `⌃⌥N` | `⌃⌥⇧N` (new Brave window) or `⌃⌥F` (the app you're in) |
+| **Interaction** | Playback controls | Everything: it's a browser | Everything: real clicks and typing |
+| **Ad blocking** | Your browser's | ✅ EasyList + EasyPrivacy, YouTube ad skipping | Your browser's (Brave Shields etc.) |
+| **Extensions** | Your browser's | ✅ Unpacked web extensions (macOS 15.4+) | Your browser's |
+| **Permissions** | None | **None** | Screen Recording + Accessibility |
+| **Engine** | Tab capture → H.264 | WebKit (Safari's engine) | Hidden virtual display + ScreenCaptureKit |
 
-**Out of your way**
-- **Slide to the edge.** Flick the window past the screen edge, or press `⌃⌥P`. Only a thin tab with a "playing" dot stays visible, and the video behind it is **heavily blurred**. Click the tab and it returns to exactly where it was.
-- **Put it anywhere,** even half off the side of the screen. Corner snapping is optional.
-- **Ghost mode** (`⌃⌥G`): see-through, and clicks pass through to the window underneath.
-- Optional **hide from screen sharing**.
+### 🎬 Video picture-in-picture
 
-**Size**
-- Drag any edge or corner (aspect ratio kept), pinch on the trackpad, or press `⌃⌥=` / `⌃⌥-`.
-- Ranges from 200 pt wide up to the full screen.
-- **Double-click** to switch between big and your size.
-- Size presets and *move to corner* in the menu.
+Pop the video out of any tab; sound keeps playing from the tab.
 
-**Playback**
-- Play/pause, ±10 s, seek bar, speed from 0.75× to 3× (including 2.85×), volume and mute. Everything controls the real tab.
-- Scroll up/down over the video for volume, sideways to seek.
-- Global shortcuts work from any app, including full-screen ones.
-- Up to **60 fps**, hardware-encoded and hardware-decoded H.264, with low latency.
-- Sound keeps playing from the browser tab, so there's no audio drift.
+- **Up to 60 fps,** hardware-encoded and hardware-decoded H.264.
+- **Controls:** play/pause, ±10 s, seek bar, volume and mute, and speed from 0.75× to 3× (including 2.85×).
+- **Scroll over the video** up/down for volume, sideways to seek.
+- **Back to the tab** with one click.
 
-**Private by design**
-- Nothing leaves your Mac. Video travels over a loopback-only socket (`127.0.0.1`).
-- The app only accepts connections from this extension's fixed ID. Web pages can't connect or send it video.
+### 🌐 Floating browser
+
+<img src="docs/images/browser.png" width="560" alt="The floating browser showing this repository on GitHub, with tabs, an address bar and back/forward/reload">
+
+A real browser that lives entirely inside the floating window. Pages resize with it, clicks and typing go straight in, and it needs no permissions.
+
+- **Browsing:** tabs, an address bar (a URL or a search), back/forward/reload, and zoom.
+- **Remembers you:** logins are kept, and tabs come back the next time you open it.
+- **Downloads** go to `~/Downloads`.
+- **Built-in ad and tracker blocking.**
+  - EasyList and EasyPrivacy are converted into WebKit's native blocking rules: about 111,000 network rules and 10,000 element-hiding rules. Blocking happens inside WebKit, before a request is even made.
+  - **YouTube ad skipping.** Filter lists can't block YouTube's own ads, so they're skipped in the page.
+  - Toggle it in the menu.
+- **Web extensions.** Put an unpacked extension (a folder with a `manifest.json`) into **menu → Extensions…** and it loads with the permissions it asks for.
+  - Tested with [BetterTube](#acknowledgements). Content scripts, `declarativeNetRequest` and storage work.
+  - Requires macOS 15.4+.
+- **Open Brave's / Chrome's / Safari's current tab here** from the menu, or send a page back with ↗.
+- **Shortcuts:** `⌘T` `⌘W` `⌘L` `⌘R` `⌘[` `⌘]` `⌘+` `⌘-` `⌘0` `⌃Tab`, plus copy, paste and undo.
+
+### 🪟 Live Apps (beta)
+
+<img src="docs/images/live-app.png" width="560" alt="A real Chromium window floating inside PiP Anywhere, with its tabs and toolbar, the page reporting 59 fps and visible">
+
+Your **real** apps, live and fully usable in the floating window. For example, Brave with your profile, extensions and Shields.
+
+- **`⌃⌥⇧N`** opens a **new Brave window** just for floating. Closing the float (or the window's last tab) closes that window.
+- **`⌃⌥F`** adopts the window you're in. When you stop floating, it goes back exactly where it was, back into full screen too if it was.
+- **Real input.** Point at the floating window and your real cursor is handed to the app, so clicks, typing, scrolling, right-click and drag-and-drop are genuine. Move out and the cursor (and keyboard focus) comes back.
+- **The app thinks the floating window is its screen.** Resize the window and the app re-lays out at that size, so text stays sharp. When a video goes full screen, it fills the floating window instead of a display.
+- **Light on battery.**
+  - Frames go straight from ScreenCaptureKit to the screen: no encoding and no copying.
+  - Unchanged frames cost nothing.
+  - Capture drops to about 1 fps while slid away.
+
+## The floating window
+
+Everything below works in every mode.
 
 <p align="center">
-  <img src="docs/images/stashed.png" width="420" alt="The window slid into the screen edge: the video is blurred beyond recognition and only a small handle with a red playing dot is shown"><br>
-  <sub>Slid into the edge: the visible strip is blurred so nobody can see what's playing.</sub>
+  <img src="docs/images/stashed.png" width="420" alt="The window slid into the screen edge: the content is blurred beyond recognition and only a small handle with a red playing dot is shown"><br>
+  <sub>Slid into the edge: the visible strip is blurred so nobody can see what's on it.</sub>
 </p>
+
+- **Slide to the edge.** Flick it past the edge or press `⌃⌥P`. Only a thin tab stays, and it's heavily blurred. Click it, and the window comes back to exactly where it was.
+- **Place it anywhere,** even half off the side. Corner snapping is optional. It can never get lost on the hidden Live Apps display.
+- **Resize** from any edge or corner (the pointer shows where), pinch, `⌃⌥=` / `⌃⌥-`, size presets, or double-click.
+- **Ghost mode** (`⌃⌥G`) makes it see-through and lets clicks pass through. Opacity is adjustable, and you can **hide it from screen sharing**.
+- **Global shortcuts** work from any app, including full-screen ones.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  subgraph Browser["Brave / Chrome extension (MV3)"]
-    CS["Content script<br/>finds the video, reports<br/>its position and state"]
-    SW["Service worker<br/>toolbar button · ⌥⇧P · menu"]
-    OD["Offscreen document<br/>tab capture → crop →<br/>WebCodecs H.264"]
+  subgraph Sources
+    V["🎬 Browser tab<br/>tabCapture → WebCodecs H.264"]
+    B["🌐 WebKit<br/>tabs · content rules · extensions"]
+    L["🪟 Real app window<br/>on a hidden virtual display"]
   end
-  subgraph Mac["PiP Anywhere.app (Swift)"]
-    WS["WebSocket server<br/>loopback only, origin-checked"]
-    DL["AVSampleBufferDisplayLayer<br/>hardware decode"]
-    PN["Floating NSPanel<br/>in its own window-server space"]
+  subgraph App["PiP Anywhere.app"]
+    WS["Loopback WebSocket<br/>origin-checked"]
+    SCK["ScreenCaptureKit<br/>IOSurface → layer"]
+    P["Floating NSPanel<br/>non-activating · own window-server space"]
   end
-  SW -- start / stop --> OD
-  CS -- "position, play state" --> OD
-  OD -- "video + state<br/>ws://127.0.0.1:47823" --> WS
-  WS -- "play, seek, volume…" --> OD
-  OD -.-> SW -.-> CS
-  WS --> DL --> PN
+  V -- "ws://127.0.0.1" --> WS --> P
+  B --> P
+  L --> SCK --> P
+  P -. "real cursor hand-off" .-> L
 ```
 
-1. **Capture.** The extension captures the tab with `chrome.tabCapture` (video only, so the tab keeps its sound) and crops each frame to the video's rectangle. It then encodes H.264 with WebCodecs at up to 60 fps. Chromium keeps rendering a captured tab even when the browser is hidden or minimized.
-2. **Stream.** Frames and playback state go to the app over a WebSocket bound to `127.0.0.1`. The app rejects any `Origin` except the extension's pinned ID.
-3. **Show.** The app feeds the stream to an `AVSampleBufferDisplayLayer`, which decodes it in hardware. That layer sits inside a non-activating `NSPanel` that can join full-screen Spaces.
-4. **Stay still.** The panel is moved into its own window-server space, so desktop swipes don't move it. This is the same technique SketchyBar's "sticky" mode uses.
-5. **Control.** Buttons, shortcuts and scroll gestures in the window are sent back to the tab's `<video>` element.
+<details>
+<summary><b>The details</b></summary>
 
-The full design, wire format and the experiments behind each decision are in [`docs/`](docs).
+- **Over full screen.** A non-activating `NSPanel` with `.canJoinAllSpaces` + `.fullScreenAuxiliary`, from an accessory (menu-bar) app. This combination is what lets it show over other apps' full-screen Spaces.
+- **Still during swipes.** The panel lives in its own window-server space (private SkyLight calls, the same technique as SketchyBar's "sticky" mode).
+- **Video.** The extension captures the tab (video only, so the tab keeps its sound), crops each frame to the `<video>`, and encodes H.264 with WebCodecs. Frames go to the app over a WebSocket bound to `127.0.0.1` that accepts only the extension's pinned ID. `AVSampleBufferDisplayLayer` decodes them in hardware.
+- **Floating browser.** `WKWebView` tabs share one persistent data store. Ad blocking is `WKContentRuleList`s compiled from EasyList/EasyPrivacy by a tested converter (`PiPCore.ContentBlocker`). Extensions load through `WKWebExtensionController`.
+- **Live Apps.** A virtual display (private `CGVirtualDisplay`, like DeskPad and BetterDisplay) is the app's "stage": nothing covers the app there, so it never stops rendering.
+  - The window is moved there with the Accessibility API.
+  - ScreenCaptureKit captures it, and each frame's IOSurface becomes the panel layer's contents.
+  - Input is your real cursor, warped onto the stage while you point at the panel.
+  - In full screen, the stage itself is resized to the floating window.
+- **Private APIs** are loaded at runtime and degrade gracefully if a future macOS removes them.
 
-## Requirements
+Design notes, measurements and experiments: [`docs/`](docs).
+</details>
 
-- macOS 14 Sonoma or later. Tested on macOS 26 Tahoe.
-- Brave or Google Chrome 116+, or another Chromium browser.
-- To build: Xcode 16+ (Swift 6) and Node.js 20+.
+## Install
 
-## Installation
+**Requirements:** macOS 14 Sonoma or later (tested on macOS 26 Tahoe). The video mode also needs Brave or Chrome 116+. Building needs Xcode 16+ and Node.js 20+.
 
-### 1. Build and install the app
+### 1. The app
 
 ```bash
 git clone https://github.com/Naman503/pip-anywhere.git
@@ -111,125 +150,140 @@ cp -R "build/PiP Anywhere.app" /Applications/
 open "/Applications/PiP Anywhere.app"
 ```
 
-A **PiP** icon appears in the menu bar. To start it automatically, turn on **menu → Open at login**. To check the window without a browser, use **menu → Show test pattern**.
+A **PiP** icon appears in the menu bar. Turn on **menu → Open at login** to have it always ready.
 
-> The app is ad-hoc signed, not notarized. If you download a prebuilt copy from [Releases](https://github.com/Naman503/pip-anywhere/releases) instead of building it, macOS will block it the first time. Right-click the app, choose **Open**, or run `xattr -dr com.apple.quarantine "/Applications/PiP Anywhere.app"`.
+> **Prebuilt copy?** Downloads on [Releases](https://github.com/Naman503/pip-anywhere/releases) aren't notarized. The first time, right-click the app and choose **Open**, or run `xattr -dr com.apple.quarantine "/Applications/PiP Anywhere.app"`.
+>
+> **Building yourself and using Live Apps?** Sign with a stable identity so macOS remembers the permissions across rebuilds: `SIGN_IDENTITY="Apple Development: you@example.com (TEAMID)" scripts/bundle.sh`.
 
-### 2. Load the extension
+### 2. The extension (video mode only)
 
 ```bash
-cd ../extension
-npm install
-npm run build
+cd ../extension && npm install && npm run build
 ```
 
 1. Open `brave://extensions` (or `chrome://extensions`) and turn on **Developer mode**.
-2. Click **Load unpacked** and select the `extension/dist` folder.
+2. Click **Load unpacked** and choose `extension/dist`.
 3. Pin **PiP Anywhere** to the toolbar.
 
-## Usage
+### Permissions
 
-Open any page with a video and press **`⌥⇧P`**, click the toolbar button, or right-click → **Pop out with PiP Anywhere**. Do the same again, or press ✕, to stop.
+| Mode | Needs | Why |
+|---|---|---|
+| Video | Nothing | The extension streams to the app on `127.0.0.1` |
+| Floating browser | Nothing | The pages are drawn by the app itself |
+| Live Apps | **Screen Recording** | To show another app's window live (nothing is recorded or saved) |
+| Live Apps | **Accessibility** | To move the app's window to the hidden display and hand it your cursor |
 
-| | |
-|---|---|
-| **Move** | Drag the video anywhere. |
-| **Resize** | Drag an edge or corner, pinch, `⌃⌥=` / `⌃⌥-`, or menu → *Size*. |
-| **Big / normal** | Double-click the video. |
-| **Slide to the edge** | Flick it past the left or right edge, the ⇥ button, or `⌃⌥P`. Click the tab or press `⌃⌥P` to bring it back. |
-| **Play / pause** | Hover controls or `⌃⌥Space`. |
-| **Seek** | `⌃⌥←` / `⌃⌥→` (10 s), scroll sideways (5 s), or drag the progress bar. |
-| **Volume** | Scroll up/down, the speaker button, or `⌃⌥M` to mute. |
-| **Speed** | Hover controls → `1×` menu. |
-| **Back to the tab** | ↗ button or `⌃⌥B`. Focuses the tab and closes the window. |
-| **Ghost mode** | `⌃⌥G`. See-through, and clicks pass through. |
+macOS only applies a new Screen Recording grant after the app restarts. PiP Anywhere tells you when that's needed.
 
-The menu bar icon also has:
-- opacity;
-- corner snapping;
-- pause or mute while slid away;
-- the progress line;
-- scroll gestures;
-- hide from screen sharing;
-- window level;
-- a list of all shortcuts.
+## Keyboard shortcuts
 
-### Automation
+| Video | | Floating browser | | Live Apps | |
+|---|---|---|---|---|---|
+| Pop out (in the browser) | `⌥⇧P` | Open / close | `⌃⌥N` | Float a new Brave window | `⌃⌥⇧N` |
+| Play / pause | `⌃⌥Space` | New / close tab | `⌘T` `⌘W` | Float the app I'm in | `⌃⌥F` |
+| Back / forward 10 s | `⌃⌥←` `⌃⌥→` | Address bar | `⌘L` | Release the cursor | `⌃⌥E` |
+| Mute | `⌃⌥M` | Back / forward / reload | `⌘[` `⌘]` `⌘R` | | |
+| Back to the tab | `⌃⌥B` | Zoom | `⌘+` `⌘-` `⌘0` | | |
 
-The app listens for the distributed notification `local.pipanywhere.command`, so Shortcuts, Raycast or a script can drive it:
+**Any mode:**
+- slide to edge / bring back: `⌃⌥P`
+- bigger / smaller: `⌃⌥=` `⌃⌥-`
+- ghost mode: `⌃⌥G`
+
+<details>
+<summary><b>Automation (Shortcuts, Raycast, scripts)</b></summary>
+
+The app listens for the distributed notification `local.pipanywhere.command`:
 
 ```bash
-swift spikes/send-command.swift toggle            # play / pause
-swift spikes/send-command.swift seek:-10
-swift spikes/send-command.swift volume:0.5
+swift spikes/send-command.swift toggle
 swift spikes/send-command.swift window:stash
-swift spikes/send-command.swift window:corner:bottomRight
+swift spikes/send-command.swift browser:open:https://example.com
+swift spikes/send-command.swift live:newwindow
 ```
 
-The available commands are:
+**Playback:**
 - `play`, `pause`, `toggle`
 - `seek:<s>`, `seekTo:<s>`, `rate:<x>`, `volume:<0–1>`, `mute:<0|1>`
 - `focusTab`, `close`
-- `window:stash`, `window:unstash`, `window:show`, `window:hide`
-- `window:ghost`, `window:grow`, `window:shrink`, `window:zoom`
-- `window:width:<pt>`, `window:corner:<topLeft|topRight|bottomLeft|bottomRight>`
-- `snapshot:<path.png>`
+
+**Window:**
+- `window:stash` · `window:unstash`
+- `window:show` · `window:hide`
+- `window:ghost` · `window:grow` · `window:shrink` · `window:zoom`
+- `window:width:<pt>` · `window:corner:<name>` · `window:moveto:<x>,<y>`
+
+**Floating browser:**
+- `browser:open[:<url>]` · `browser:close`
+
+**Live Apps:**
+- `live:newwindow` · `live:float[:<app|pid|bundle id>]` · `live:unfloat`
+- `live:release` · `live:diagnose` · `live:status`
+
+**Debugging:**
+- `snapshot:<file.png>`
+
+</details>
 
 ## Limitations
 
-- **DRM video** (Netflix, Prime Video, Disney+) can't be captured and shows black. Use Safari's built-in PiP for those.
-- **The video must stay within its tab's visible area.** The extension scrolls it into view when you start. Switching tabs, switching desktops or minimizing the browser is fine.
-- **Sharpness follows the video's size on the page.** Theater mode or a bigger browser window gives a sharper picture.
-- **The app must be running.** The extension shows a red `!` if it isn't. Turn on *Open at login* in the menu.
-- **Private macOS APIs.** "Stay still while switching desktops" and the resize cursor use private SkyLight window-server calls, loaded at runtime. If a future macOS removes them, those two features switch off and everything else keeps working.
+- **DRM video** (Netflix, Prime Video, Disney+) can't be captured in Video or Live Apps mode. The floating browser plays what Safari can.
+- **Video mode:** the video must stay in its tab's visible area. Switching tabs or desktops, or minimizing the browser, is fine.
+- **Floating browser:** it's WebKit, not your Brave profile. You sign in to sites once. Extension toolbar popups don't have a place in the window yet.
+- **Live Apps:** beta.
+  - The hidden display shows up in System Settings → Displays while something floats.
+  - It needs Screen Recording and Accessibility.
+- **Private macOS APIs.** These power "stay still while switching desktops", the background resize cursor, and Live Apps' virtual display. They're loaded at runtime; if one disappears in a future macOS, that feature turns off and the rest keeps working.
 
 ## Development
 
 ```
-app/                 macOS app (SwiftPM)
-  Sources/PiPCore/       protocol + window geometry (pure logic, unit-tested)
-  Sources/PiPAnywhere/   panel, video renderer, WebSocket server, menu, hotkeys
-  scripts/bundle.sh      builds "build/PiP Anywhere.app"
-extension/           Chromium MV3 extension (TypeScript + esbuild)
-  src/                   background · content · offscreen · streamer · connection
-  tests/e2e.mjs          end-to-end tests with the real app and Playwright
-spikes/              probes for window-server behaviour (full screen, Space switches)
-docs/                plan, design decisions, wire protocol, research
+app/                    macOS app (SwiftPM, no dependencies)
+  Sources/PiPCore/        protocol, window geometry, ad-block converter — pure logic, unit-tested
+  Sources/CVirtualDisplay/  Objective-C wrapper for the virtual display (resolved at runtime)
+  Sources/PiPAnywhere/    panel, video, Browser/ (WebKit, ad blocking, extensions), Live/ (stage, capture, cursor)
+extension/              Chromium MV3 extension (TypeScript + esbuild)
+spikes/                 window-server probes, the Live Apps test harness, the command sender
+docs/                   decisions & measurements, wire protocol, research, plans
 ```
 
 | Command | Where | What it does |
 |---|---|---|
-| `swift test` | `app/` | Unit tests: protocol parsing and window geometry |
-| `scripts/bundle.sh [debug]` | `app/` | Builds the `.app` |
-| `npm run typecheck` · `npm run build` · `npm run dev` | `extension/` | Type-check, bundle to `dist/`, or rebuild on save |
-| `node tests/e2e.mjs pipeline` | `extension/` | Test stream → encoder → app (headless) |
-| `node tests/e2e.mjs youtube` | `extension/` | Real tab capture of a YouTube video: frame rate, commands, capture while minimized. Opens a browser window. |
-| `swift spikes/FullscreenProbe.swift` | root | Checks the window is visible and in front over a full-screen app |
-| `swift spikes/SpaceSwitchProbe.swift` | root | Checks the window doesn't move during a desktop transition |
+| `swift test` | `app/` | 22 unit tests: protocol, geometry, resize zones, ad-block conversion |
+| `scripts/bundle.sh [debug]` | `app/` | Builds `build/PiP Anywhere.app` (`SIGN_IDENTITY` optional) |
+| `scripts/make-icon.sh` | `app/` | Regenerates every icon from code |
+| `npm run typecheck` · `build` · `dev` | `extension/` | Type-check, bundle, rebuild on save |
+| `node tests/e2e.mjs pipeline` · `youtube` | `extension/` | End-to-end with the real app: frame rate, commands, capture while minimized |
+| `node spikes/live/harness.mjs` | root | Test browser for Live Apps: frame rate, visibility, input, full screen |
+| `swift spikes/FullscreenProbe.swift` · `SpaceSwitchProbe.swift` | root | Window over full screen / still during desktop switches |
 
-The end-to-end tests run their own copy of the app on port 47899, so a copy you're using isn't disturbed. Set `CHROMIUM_PATH` to reuse a downloaded Chromium.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions.
+Test copies run on their own port (`--port 47898`) with their own settings, so the copy you use isn't disturbed. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-- [Design decisions and experiment results](docs/decisions.md)
+- [Design decisions, measurements and every feedback round](docs/decisions.md)
+- [Live Apps: plan](docs/live-apps/plan.md) · [technical research](docs/live-apps/research-technical.md) · [product research](docs/live-apps/research-product.md)
 - [Extension ↔ app wire protocol](docs/protocol.md)
-- [Original plan and roadmap](docs/plan.md)
-- [Background research](docs/research.md)
+- [Original plan](docs/plan.md) · [background research](docs/research.md)
 - [Changelog](CHANGELOG.md)
 
 ## Roadmap
 
-- Zoom into part of the video, for reading small code in tutorials
-- Captions rendered in the window
+- Extension toolbar buttons and popups in the floating browser
+- Several floating windows at once; per-app size, position and opacity presets
+- Zoom into part of a window, for reading small code in tutorials
 - Launching the app from the browser (native messaging)
 - Signed and notarized releases
 
 ## Acknowledgements
 
-- [SketchyBar](https://github.com/FelixKratz/SketchyBar), for the window-server "sticky space" technique.
-- Apple Developer Technical Support's forum guidance on non-activating panels over full-screen Spaces.
+- [SketchyBar](https://github.com/FelixKratz/SketchyBar): the window-server "sticky space" technique.
+- [DeskPad](https://github.com/Stengo/DeskPad): showing a virtual display in a window.
+- [EasyList](https://easylist.to): the filter lists behind the built-in ad blocker.
+- BetterTube: a companion YouTube extension, used to test web-extension support.
+- Apple Developer Technical Support's forum guidance on panels over full-screen Spaces.
 
 ## License
 
