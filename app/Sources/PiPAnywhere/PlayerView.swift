@@ -107,7 +107,7 @@ struct PlayerView: View {
                     .shadow(radius: 2)
                 Spacer(minLength: 4)
                 IconButton(symbol: model.stashEdge == .left ? "arrow.left.to.line" : "arrow.right.to.line",
-                           help: "Slide to the edge (⌃⌥P)", action: actions.toggleStash)
+                           help: "Slide to the edge (⌃⌥Z)", action: actions.toggleStash)
                 IconButton(symbol: "xmark", help: "Close", action: actions.close)
             }
             .padding(.horizontal, 8)
@@ -411,7 +411,7 @@ struct LiveView: View {
                 Circle().fill(Color.green).frame(width: 6, height: 6).help("You're controlling this app")
             }
             Spacer(minLength: 4)
-            IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥P)", action: actions.toggleStash)
+            IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥Z)", action: actions.toggleStash)
             IconButton(symbol: "rectangle.portrait.and.arrow.right", size: 11,
                        help: "Stop floating: a window opened for floating closes, your own window goes back", action: actions.liveReturn)
             IconButton(symbol: "xmark", size: 11, help: "Close", action: actions.close)
@@ -499,7 +499,7 @@ struct StashHandle: View {
             .frame(width: PanelGeometry.peek)
             .frame(maxHeight: .infinity)
             .background(.black.opacity(0.55))
-            .help("Click to bring the video back (⌃⌥P)")
+            .help("Click to bring the video back (⌃⌥Z)")
             if edge == .right { Spacer(minLength: 0) }
         }
     }

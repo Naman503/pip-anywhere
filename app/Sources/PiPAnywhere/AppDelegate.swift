@@ -544,7 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(ClosureMenuItem(panel.isVisible ? "Hide" : "Show") { [unowned self] in
                 panel.isVisible ? panel.hide() : panel.show()
             })
-            menu.addItem(ClosureMenuItem(model.isStashed ? "Bring back from edge  (⌃⌥P)" : "Slide to edge  (⌃⌥P)") { [unowned self] in
+            menu.addItem(ClosureMenuItem(model.isStashed ? "Bring back from edge  (⌃⌥Z)" : "Slide to edge  (⌃⌥Z)") { [unowned self] in
                 panel.toggleStash()
             })
             if model.live == nil && !model.browserActive {
@@ -630,7 +630,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ("Floating browser", [("Open / close", "⌃⌥N"), ("New tab · close tab", "⌘T · ⌘W"), ("Address bar", "⌘L"),
                                   ("Back · forward · reload", "⌘[ · ⌘] · ⌘R"), ("Zoom", "⌘+ · ⌘- · ⌘0"), ("Next / previous tab", "⌃Tab · ⌃⇧Tab")]),
             ("Live Apps", [("Float a new Brave window", "⌃⌥⇧N"), ("Float the app I'm in", "⌃⌥F"), ("Release the cursor", "⌃⌥E")]),
-            ("Window", [("Slide to edge / bring back", "⌃⌥P"), ("Bigger / smaller", "⌃⌥= / ⌃⌥-"), ("Ghost mode", "⌃⌥G")]),
+            ("Window", [("Slide to edge / bring back", "⌃⌥Z"), ("Bigger / smaller", "⌃⌥= / ⌃⌥-"), ("Ghost mode", "⌃⌥G")]),
         ]
         return groups.flatMap { title, items in
             [NSMenuItem.sectionHeader(title: title)] + items.map { NSMenuItem.disabled("\($0.1)    \($0.0)") }

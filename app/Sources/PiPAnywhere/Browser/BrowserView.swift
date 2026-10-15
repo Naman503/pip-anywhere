@@ -55,7 +55,7 @@ struct BrowserView: View {
                 .padding(.leading, 8)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥P)", action: actions.toggleStash)
+            IconButton(symbol: "arrow.right.to.line", size: 11, help: "Slide to the edge (⌃⌥Z)", action: actions.toggleStash)
             IconButton(symbol: "xmark", size: 11, help: "Close the browser (tabs are kept)", action: actions.close)
         }
         .padding(.trailing, 6)

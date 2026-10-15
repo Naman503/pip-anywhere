@@ -93,7 +93,7 @@ Everything below works in every mode.
   <sub>Slid into the edge: the visible strip is blurred so nobody can see what's on it.</sub>
 </p>
 
-- **Slide to the edge.** Flick it past the edge or press `⌃⌥P`. Only a thin tab stays, and it's heavily blurred. Click it, and the window comes back to exactly where it was.
+- **Slide to the edge.** Flick it past the edge or press `⌃⌥Z`. Only a thin tab stays, and it's heavily blurred. Click it, and the window comes back to exactly where it was.
 - **Place it anywhere,** even half off the side. Corner snapping is optional. It can never get lost on the hidden Live Apps display.
 - **Resize** from any edge or corner (the pointer shows where), pinch, `⌃⌥=` / `⌃⌥-`, size presets, or double-click.
 - **Ghost mode** (`⌃⌥G`) makes it see-through and lets clicks pass through. Opacity is adjustable, and you can **hide it from screen sharing**.
@@ -188,7 +188,7 @@ macOS only applies a new Screen Recording grant after the app restarts. PiP Anyw
 | Back to the tab | `⌃⌥B` | Zoom | `⌘+` `⌘-` `⌘0` | | |
 
 **Any mode:**
-- slide to edge / bring back: `⌃⌥P`
+- slide to edge / bring back: `⌃⌥Z`
 - bigger / smaller: `⌃⌥=` `⌃⌥-`
 - ghost mode: `⌃⌥G`
 

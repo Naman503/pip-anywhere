@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Slide to the edge / bring back is now `⌃⌥Z` (was `⌃⌥P`), so it's easy to press with one hand.
+
 ## 0.4.0: 2026-10-15
 
 Two new things can float, next to video.

@@ -52,7 +52,7 @@ final class HotKeys {
 extension HotKeys.Shortcut {
     private static let ctrlOpt = controlKey | optionKey
 
-    static let toggleStash = Self(keyCode: kVK_ANSI_P, modifiers: ctrlOpt, title: "⌃⌥P")
+    static let toggleStash = Self(keyCode: kVK_ANSI_Z, modifiers: ctrlOpt, title: "⌃⌥Z")
     static let playPause = Self(keyCode: kVK_Space, modifiers: ctrlOpt, title: "⌃⌥Space")
     static let back10 = Self(keyCode: kVK_LeftArrow, modifiers: ctrlOpt, title: "⌃⌥←")
     static let forward10 = Self(keyCode: kVK_RightArrow, modifiers: ctrlOpt, title: "⌃⌥→")
