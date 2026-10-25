@@ -143,6 +143,8 @@ final class LiveController {
     // MARK: Float any window
 
     func float(_ app: NSRunningApplication, window chosen: WindowMover.Window? = nil, owned: Bool = false) async {
+        UsageReporter.shared.event("pip_started", ["mode": "live"])
+        UsageReporter.shared.once("first_pip")
         if session != nil { await unfloat() }
         guard permissionsGranted(prompt: true) else { return }
         guard stage.create(), await waitForStage(), let displayID = stage.displayID else {
@@ -422,6 +424,9 @@ final class LiveController {
         }
         return false
     }
+
+    /// Screen Recording granted (no prompt), for the usage report's setup step.
+    static func screenRecordingGranted() -> Bool { CGPreflightScreenCaptureAccess() }
 
     func permissionsGranted(prompt: Bool) -> Bool {
         let accessibility = WindowMover.isTrusted(prompt: prompt)

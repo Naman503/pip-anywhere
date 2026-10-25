@@ -45,6 +45,12 @@ enum Settings {
         set { defaults.set(newValue, forKey: "opacity") }
     }
 
+    /// Anonymous usage reporting (UsageReporter); on by default.
+    static var shareUsage: Bool {
+        get { defaults.object(forKey: "shareUsage") as? Bool ?? true }
+        set { defaults.set(newValue, forKey: "shareUsage") }
+    }
+
     static var snapToCorners: Bool {
         get { defaults.object(forKey: "snapToCorners") as? Bool ?? false }
         set { defaults.set(newValue, forKey: "snapToCorners") }
