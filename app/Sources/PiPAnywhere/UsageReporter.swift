@@ -222,8 +222,11 @@ final class UsageReporter {
 
     private func installCrashHandler() {
         NSSetUncaughtExceptionHandler { exception in
-            // Type and call stack only: the reason can contain titles.
+            // Like `enabled`: the handler is only installed when `active`, so the switch decides.
+            // The signal handler then skips this crash either way (it's the same one).
             crashExceptionRecorded = 1
+            guard Settings.shareUsage else { return }
+            // Type and call stack only: the reason can contain titles.
             let symbols = exception.callStackSymbols
             let stack = symbols.prefix(20).joined(separator: "\n")
             let fp = UsageCatalog.fingerprint(exception.name.rawValue + symbols.prefix(4).map(UsageCatalog.symbolOnly).joined(separator: "|"))
@@ -243,6 +246,9 @@ final class UsageReporter {
         let path = Self.signalFile.path
         crashFD = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0o600)
         guard crashFD >= 0 else { return }
+        // Allocate the backtrace buffer now: a lazy global first touched inside the
+        // handler would run its initialiser (malloc) in signal context.
+        crashFrames.initialize(repeating: nil, count: 64)
         for sig in [SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGFPE, SIGTRAP] {
             signal(sig, crashSignalHandler)
         }
