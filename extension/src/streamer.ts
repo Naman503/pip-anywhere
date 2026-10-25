@@ -52,6 +52,11 @@ export class Streamer {
   private running = false;
   private reader: ReadableStreamDefaultReader<VideoFrame> | null = null;
 
+  /** Problems worth counting (anonymous usage): fixed kinds only. */
+  onProblem: (kind: 'encoder' | 'frame' | 'no_encoder') => void = () => {};
+  /** The encoder was (re)configured for this output height. */
+  onConfigured: (height: number) => void = () => {};
+
   constructor(private readonly sink: Sink) {}
 
   requestKeyframe() {
@@ -69,6 +74,7 @@ export class Streamer {
         this.handle(frame);
       } catch (err) {
         console.error('[PiP] frame failed', err);
+        this.onProblem('frame');
       } finally {
         frame.close();
       }
@@ -94,7 +100,12 @@ export class Streamer {
     const width = even(src.width * scale);
     const height = even(src.height * scale);
     if (width !== this.size.width || height !== this.size.height || !this.encoder) {
-      this.configuring = this.configure(width, height).finally(() => (this.configuring = null));
+      this.configuring = this.configure(width, height)
+        .catch((err) => {
+          console.error('[PiP] encoder setup failed', err);
+          this.onProblem('no_encoder');
+        })
+        .finally(() => (this.configuring = null));
       return;
     }
     const encoder = this.encoder;
@@ -154,6 +165,7 @@ export class Streamer {
         output: (chunk, meta) => this.output(chunk, meta),
         error: (err) => {
           console.error('[PiP] encoder error', err);
+          this.onProblem('encoder');
           this.encoder = null; // reconfigured on the next frame
         },
       });
@@ -164,6 +176,7 @@ export class Streamer {
     this.canvas = new OffscreenCanvas(width, height);
     this.ctx = this.canvas.getContext('2d', { alpha: false, desynchronized: true });
     this.needKeyframe = true;
+    this.onConfigured(height);
     console.info(`[PiP] encoding ${width}×${height} ${config.codec}`);
   }
 

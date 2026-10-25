@@ -97,16 +97,20 @@ public struct PlaybackState: Codable, Equatable, Sendable {
 }
 
 public enum Inbound: Equatable, Sendable {
-    case hello(version: String)
+    /// `ext`: the extension's version (digits and dots only, else nil).
+    case hello(version: String, ext: String? = nil)
     case config(StreamConfig)
     case state(PlaybackState)
     case stop(reason: String)
+    /// Anonymous usage counted by the extension, already filtered by UsageCatalog's allow-list.
+    case usage([UsageCatalog.ExtensionItem])
     case unknown(type: String)
 
     private struct Envelope: Decodable {
         var type: String
         var version: String?
         var reason: String?
+        var ext: String?
     }
 
     public static func decode(_ data: Data) -> Inbound? {
@@ -114,13 +118,18 @@ public enum Inbound: Equatable, Sendable {
         guard let envelope = try? decoder.decode(Envelope.self, from: data) else { return nil }
         switch envelope.type {
         case "hello":
-            return .hello(version: envelope.version ?? "?")
+            let ext = envelope.ext.flatMap { $0.range(of: #"^\d{1,4}(\.\d{1,4}){0,3}$"#, options: .regularExpression) != nil ? $0 : nil }
+            return .hello(version: envelope.version ?? "?", ext: ext)
         case "config":
             return (try? decoder.decode(StreamConfig.self, from: data)).map(Inbound.config)
         case "state":
             return (try? decoder.decode(PlaybackState.self, from: data)).map(Inbound.state)
         case "stop":
             return .stop(reason: envelope.reason ?? "")
+        case "usage":
+            let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let items = object?["items"] as? [[String: Any]] ?? []
+            return .usage(UsageCatalog.sanitizeExtensionItems(items, today: UsageKeys.day()))
         default:
             return .unknown(type: envelope.type)
         }

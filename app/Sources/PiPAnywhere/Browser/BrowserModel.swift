@@ -52,6 +52,7 @@ final class BrowserModel: ObservableObject {
         content.addUserScript(AdBlocker.youTubeAdSkipper)
         Task {
             let lists = await AdBlocker.shared.ruleLists()
+            UsageReporter.shared.count("adblock_ready", ["lists": String(lists.count)])
             guard Settings.blockAds else { return }
             lists.forEach(content.add)
             log("adblock: \(lists.count) rule list(s) active")
@@ -99,6 +100,9 @@ final class BrowserModel: ObservableObject {
     /// Address bar input: a URL, a bare domain, or a search.
     func go(_ input: String) {
         guard let url = Self.url(from: input) else { return }
+        // Only whether it was an address or a search, never what was typed.
+        let search = url.host() == "www.google.com" && url.path() == "/search" && !input.contains("google.com")
+        UsageReporter.shared.count("browser_action", ["action": search ? "address_search" : "address_url", "via": "address_bar"])
         if let tab = selected { tab.webView.load(URLRequest(url: url)) } else { newTab(url) }
     }
 
@@ -166,6 +170,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let owner else { return nil }
+        UsageReporter.shared.count("browser_action", ["action": "popup_tab", "via": "page"])
         return owner.newTab(nil, select: true, configuration: configuration).webView
     }
 
@@ -207,6 +212,7 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
         // ⌘-click opens a link in a new tab.
         if navigationAction.modifierFlags.contains(.command), navigationAction.navigationType == .linkActivated,
            let url = navigationAction.request.url {
+            UsageReporter.shared.count("browser_action", ["action": "cmd_click_tab", "via": "page"])
             owner?.newTab(url, select: false)
             decisionHandler(.cancel)
             return
@@ -217,6 +223,37 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
         decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        UsageReporter.shared.count("browser_page_crashed")
+        log("browser: web content process terminated")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        Self.countNavigationError(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        Self.countNavigationError(error)
+    }
+
+    /// Page load failures by category (the URL is never reported).
+    private static func countNavigationError(_ error: Error) {
+        let ns = error as NSError
+        let kind: String
+        switch (ns.domain, ns.code) {
+        case (NSURLErrorDomain, NSURLErrorCancelled): return // a new navigation replaced it
+        case ("WebKitErrorDomain", 102): return // frame load interrupted (downloads, policy changes)
+        case (NSURLErrorDomain, NSURLErrorNotConnectedToInternet), (NSURLErrorDomain, NSURLErrorNetworkConnectionLost): kind = "offline"
+        case (NSURLErrorDomain, NSURLErrorCannotFindHost), (NSURLErrorDomain, NSURLErrorDNSLookupFailed): kind = "dns"
+        case (NSURLErrorDomain, NSURLErrorTimedOut): kind = "timeout"
+        case (NSURLErrorDomain, let code) where (-1206 ... -1200).contains(code): kind = "tls"
+        case (NSURLErrorDomain, _): kind = "network_other"
+        case ("WebKitErrorDomain", _): kind = "webkit"
+        default: kind = "other"
+        }
+        UsageReporter.shared.count("browser_load_failed", ["kind": kind])
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
@@ -240,11 +277,18 @@ final class BrowserTab: NSObject, ObservableObject, Identifiable, WKNavigationDe
             destination = downloads.appendingPathComponent("\(base) (\(n))" + (ext.isEmpty ? "" : ".\(ext)"))
             n += 1
         }
+        UsageReporter.shared.count("browser_download", ["result": "started"])
         log("browser: downloading to \(destination.path)")
         completionHandler(destination)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        UsageReporter.shared.count("browser_download", ["result": "finished"])
         log("browser: download finished")
+    }
+
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        UsageReporter.shared.count("browser_download", ["result": "failed"])
+        log("browser: download failed: \(error.localizedDescription)")
     }
 }

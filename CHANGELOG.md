@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.6.0 (extension 0.5.0)
+
+- **Richer anonymous usage** (still one switch in the menu, still no titles, names, URLs or screen content): how each floating window was opened and closed and how long it stayed open, window/menu/video/browser actions as daily counts, failures by category (permissions, capture, page loads, downloads), a daily settings and permissions snapshot, and the browser extension's pop-out results, relayed through the app.
+- Crash reports now also cover fatal signals (not just Objective-C exceptions), with fingerprints that stay the same between runs.
+
 ## 0.5.0: 2026-10-25
 
 - **Share anonymous usage** (menu → Share anonymous usage), on by default: which modes are used (video, browser, live app), shortcut use counts, setup milestones and crash types, with a random id. Never window or video titles, app names, URLs or screen content. Turning it off deletes what was sent.
