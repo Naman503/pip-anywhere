@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.0: 2026-10-25
+
+- **Share anonymous usage** (menu → Share anonymous usage), on by default: which modes are used (video, browser, live app), shortcut use counts, setup milestones and crash types, with a random id. Never window or video titles, app names, URLs or screen content. Turning it off deletes what was sent.
+
 ### Changed
 - Slide to the edge / bring back is now `⌃⌥Z` (was `⌃⌥P`), so it's easy to press with one hand.
 

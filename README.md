@@ -166,6 +166,10 @@ cd ../extension && npm install && npm run build
 2. Click **Load unpacked** and choose `extension/dist`.
 3. Pin **PiP Anywhere** to the toolbar.
 
+### Privacy
+
+PiP Anywhere shares **anonymous usage** to see which features help: modes used (video, browser, live app), shortcut counts, setup milestones and crash types, with a random id made on first run. Never window or video titles, app names, URLs or screen content. Turn it off from the menu (**Share anonymous usage**); that also deletes what was sent. Copies started on a test port never report.
+
 ### Permissions
 
 | Mode | Needs | Why |

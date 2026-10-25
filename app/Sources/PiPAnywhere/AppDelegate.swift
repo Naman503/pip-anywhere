@@ -51,6 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         SkyLight.allowCursorChangesInBackground()
+        // Test copies on another port never report usage.
+        UsageReporter.shared.active = options.port == WireProtocol.port
+        UsageReporter.shared.start()
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                   app.processIdentifier != getpid() else { return }
@@ -175,6 +178,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func streamStarted(_ config: StreamConfig) {
+        UsageReporter.shared.event("pip_started", ["mode": "video"])
+        UsageReporter.shared.once("first_pip")
         hideTask?.cancel()
         // The window is showing a live app or the browser; the video keeps decoding but isn't shown.
         if model.live != nil || model.browserActive { return }
@@ -246,6 +251,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// Shows the built-in browser (restoring its tabs), optionally opening `url` in a new tab.
     func openBrowser(_ url: URL? = nil) {
+        UsageReporter.shared.event("pip_started", ["mode": "browser"])
+        UsageReporter.shared.once("first_pip")
         if live.isFloating { Task { await live.unfloat() } }
         if model.testPattern { stopTestPattern() }
         Task {
@@ -397,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Hotkeys
 
     private func setUpHotKeys() {
-        let keys = HotKeys.shared
+        let keys = CountingHotKeys()
         keys.register(.toggleStash) { [unowned self] in
             if !panel.isVisible, model.connected || model.testPattern { panel.show() } else { panel.toggleStash() }
         }
@@ -568,6 +575,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(settingsMenu())
         menu.addItem(submenu("Keyboard shortcuts", shortcutItems()))
+        menu.addItem(ClosureMenuItem("Share anonymous usage", checked: Settings.shareUsage) {
+            Settings.shareUsage.toggle()
+            if Settings.shareUsage { UsageReporter.shared.turnedOn() } else { UsageReporter.shared.turnedOff() }
+        })
         let loginEnabled = SMAppService.mainApp.status == .enabled
         menu.addItem(ClosureMenuItem("Open at login", checked: loginEnabled) {
             do {
@@ -721,5 +732,16 @@ private extension NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
+    }
+}
+
+/// Registers global shortcuts and counts their use (shortcut name only) for usage reporting.
+@MainActor
+private struct CountingHotKeys {
+    func register(_ key: HotKeys.Shortcut, handler: @escaping () -> Void) {
+        HotKeys.shared.register(key) {
+            MainActor.assumeIsolated { UsageReporter.shared.count("shortcut_used", ["shortcut": key.title]) }
+            handler()
+        }
     }
 }

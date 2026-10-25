@@ -214,3 +214,14 @@ final class ContentBlockerTests: XCTestCase {
         XCTAssertEqual(r.network.count, 5)
     }
 }
+
+final class UsageKeysTests: XCTestCase {
+    func testCounterKeysRoundTrip() {
+        let k = UsageKeys.counter(day: "2026-10-25", name: "shortcut_used", props: ["shortcut": "⌃⌥Z"])
+        let p = UsageKeys.parse(k)
+        XCTAssertEqual(p?.day, "2026-10-25")
+        XCTAssertEqual(p?.name, "shortcut_used")
+        XCTAssertEqual(p?.props, ["shortcut": "⌃⌥Z"])
+        XCTAssertNil(UsageKeys.parse("x"))
+    }
+}
