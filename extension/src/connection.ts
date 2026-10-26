@@ -20,7 +20,7 @@ export class AppConnection implements Sink {
       ws.onopen = () => {
         clearTimeout(timer);
         this.ws = ws;
-        this.sendText({ type: 'hello', version: '1', userAgent: navigator.userAgent });
+        this.sendText({ type: 'hello', version: '1', ext: chrome.runtime.getManifest().version, userAgent: navigator.userAgent });
         resolve();
       };
       ws.onerror = () => {

@@ -48,9 +48,10 @@ struct BrowserView: View {
                 HStack(spacing: 4) {
                     ForEach(browser.tabs) { tab in
                         TabPill(tab: tab, selected: tab.id == browser.selected?.id,
-                                select: { browser.select(tab) }, close: { browser.close(tab) })
+                                select: { trackBrowser("select_tab"); browser.select(tab) },
+                                close: { trackBrowser("close_tab"); browser.close(tab) })
                     }
-                    IconButton(symbol: "plus", size: 11, help: "New tab (⌘T)") { browser.newTab() }
+                    IconButton(symbol: "plus", size: 11, help: "New tab (⌘T)") { trackBrowser("new_tab"); browser.newTab() }
                 }
                 .padding(.leading, 8)
             }
@@ -119,11 +120,12 @@ private struct Toolbar: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            IconButton(symbol: "chevron.left", size: 12, help: "Back (⌘[)") { tab.webView.goBack() }
+            IconButton(symbol: "chevron.left", size: 12, help: "Back (⌘[)") { trackBrowser("back"); tab.webView.goBack() }
                 .opacity(tab.canGoBack ? 1 : 0.35)
-            IconButton(symbol: "chevron.right", size: 12, help: "Forward (⌘])") { tab.webView.goForward() }
+            IconButton(symbol: "chevron.right", size: 12, help: "Forward (⌘])") { trackBrowser("forward"); tab.webView.goForward() }
                 .opacity(tab.canGoForward ? 1 : 0.35)
             IconButton(symbol: tab.isLoading ? "xmark" : "arrow.clockwise", size: 12, help: tab.isLoading ? "Stop" : "Reload (⌘R)") {
+                trackBrowser(tab.isLoading ? "stop" : "reload")
                 if tab.isLoading { tab.webView.stopLoading() } else { tab.webView.reload() }
             }
             TextField("Search or enter address", text: $address)
@@ -140,7 +142,10 @@ private struct Toolbar: View {
                 }
                 .onExitCommand { addressFocused = false; address = tab.url?.absoluteString ?? "" }
             if let url = tab.url {
-                IconButton(symbol: "arrow.up.forward.app", size: 12, help: "Open this page in your default browser") { openInBrowser(url) }
+                IconButton(symbol: "arrow.up.forward.app", size: 12, help: "Open this page in your default browser") {
+                    trackBrowser("open_in_default_browser")
+                    openInBrowser(url)
+                }
             }
         }
         .padding(.horizontal, 6)
@@ -154,6 +159,12 @@ private struct Toolbar: View {
             address = tab.url?.absoluteString ?? ""
         }
     }
+}
+
+/// Counts a toolbar/tab-strip action (fixed enum) for anonymous usage.
+@MainActor
+private func trackBrowser(_ action: String) {
+    UsageReporter.shared.count("browser_action", ["action": action, "via": "toolbar"])
 }
 
 private struct LoadingBar: View {

@@ -4,12 +4,15 @@
 import { AppConnection } from './connection';
 import type { ExtMessage, VideoRect } from './protocol';
 import { MAX_FPS, Streamer } from './streamer';
+import { captureErrors, resolutionBucket, trackRemote, type UsageItem } from './usage';
+
+captureErrors('offscreen', (p) => trackRemote('ext_error', p));
 
 let session: { tabId: number; stream: MediaStream; streamer: Streamer; app: AppConnection } | null = null;
 
 const notify = (msg: ExtMessage) => chrome.runtime.sendMessage(msg).catch(() => {});
 
-async function start(streamId: string, tabId: number, rect: VideoRect, port: number) {
+async function start(streamId: string, tabId: number, rect: VideoRect, port: number, usage: UsageItem[]) {
   stop('replaced');
 
   const app = new AppConnection();
@@ -18,6 +21,11 @@ async function start(streamId: string, tabId: number, rect: VideoRect, port: num
   } catch (err) {
     notify({ type: 'pip:error', message: (err as Error).message });
     return;
+  }
+  // Counts kept since the last pop-out; the app decides whether to record them.
+  if (usage.length) {
+    app.sendText({ type: 'usage', items: usage });
+    notify({ type: 'pip:usage-sent', items: usage });
   }
 
   // Video only: capturing audio would mute the tab; the tab keeps playing sound.
@@ -37,6 +45,19 @@ async function start(streamId: string, tabId: number, rect: VideoRect, port: num
   const [track] = stream.getVideoTracks();
   const streamer = new Streamer(app);
   streamer.crop = rect;
+  const problems = new Set<string>();
+  streamer.onProblem = (kind) => {
+    // Once per pop-out per kind.
+    if (problems.has(kind)) return;
+    problems.add(kind);
+    trackRemote('ext_error', { where: 'offscreen', kind });
+  };
+  let reportedSize = false;
+  streamer.onConfigured = (height) => {
+    if (reportedSize) return;
+    reportedSize = true;
+    trackRemote('ext_encoder', { res: resolutionBucket(height) });
+  };
   session = { tabId, stream, streamer, app };
 
   app.onMessage = (msg) => {
@@ -70,7 +91,7 @@ function end(reason: string) {
 chrome.runtime.onMessage.addListener((msg: ExtMessage, sender) => {
   switch (msg.type) {
     case 'pip:start':
-      void start(msg.streamId, msg.tabId, msg.rect, msg.port).catch((err) => {
+      void start(msg.streamId, msg.tabId, msg.rect, msg.port, msg.usage ?? []).catch((err) => {
         console.error('[PiP] start failed', err);
         end('start failed');
         notify({ type: 'pip:error', message: String(err) });

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import PiPCore
 import ScreenCaptureKit
 
 /// Live Apps: floats a real app window in the panel. The window is moved onto the
@@ -48,6 +49,8 @@ final class LiveController {
         var inFullScreen = false
         /// Where the window was on the stage before full screen.
         var windowedFrame: CGRect?
+        /// The app went full screen at some point (usage reporting).
+        var usedFullScreen = false
     }
 
     static let defaultSurfaceSize = CGSize(width: 1000, height: 660)
@@ -62,6 +65,9 @@ final class LiveController {
         bridge.stageBounds = { [unowned self] in stage.bounds }
         bridge.onCursor = { [unowned self] in showCursor(at: $0) }
         bridge.onCaptureChange = { [unowned self] captured in
+            if captured != model.liveCaptured {
+                UsageReporter.shared.count("live_action", ["action": captured ? "cursor_in" : "cursor_out"])
+            }
             model.liveCaptured = captured
             applyFrameRateCap()
         }
@@ -80,9 +86,9 @@ final class LiveController {
     // MARK: Float / unfloat
 
     /// Floats the app the user is currently in (hotkey).
-    func floatFrontmost() async {
+    func floatFrontmost(source: String = "shortcut_frontmost") async {
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return }
-        await float(app)
+        await float(app, source: source)
     }
 
     // MARK: A new browser window, just for floating (⌃⌥N)
@@ -98,20 +104,21 @@ final class LiveController {
     }
 
     /// ⌃⌥N: float a new browser window, or close it if one is already floating.
-    func toggleNewBrowserWindow() async {
+    func toggleNewBrowserWindow(source: String = "shortcut_new_window") async {
         if let s = session, s.owned {
-            await unfloat()
+            await unfloat(how: source.hasPrefix("menu") ? "menu" : "shortcut")
         } else if let browser = Self.preferredBrowser {
-            await floatNewWindow(bundleID: browser)
+            await floatNewWindow(bundleID: browser, source: source)
         } else {
+            UsageReporter.shared.failed("live", "no_chromium_browser", ["source": source])
             log("live: no Chromium browser (Brave, Chrome, Edge…) installed")
         }
     }
 
-    func floatNewWindow(bundleID: String) async {
-        guard permissionsGranted(prompt: true),
+    func floatNewWindow(bundleID: String, source: String = "shortcut_new_window") async {
+        guard permissionsGranted(prompt: true, reportFor: source),
               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return }
-        if session != nil { await unfloat() }
+        if session != nil { await unfloat(how: "replaced") }
         let existing = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first { !$0.isTerminated }
         let before = existing.map(WindowMover.windowIDs(of:)) ?? []
 
@@ -124,6 +131,8 @@ final class LiveController {
         do {
             launched = try await NSWorkspace.shared.openApplication(at: appURL, configuration: config)
         } catch {
+            UsageReporter.shared.failed("live", "launch_failed", ["source": source])
+            UsageReporter.shared.nonFatal("live.openApplication", error)
             log("live: couldn't open a new window: \(error)")
             return
         }
@@ -133,26 +142,32 @@ final class LiveController {
             try? await Task.sleep(for: .milliseconds(50))
             if let window = WindowMover.standardWindows(of: app).first(where: { $0.windowID.map { !before.contains($0) } ?? false }) {
                 log("live: new \(app.localizedName ?? "browser") window \(window.windowID ?? 0) opened for floating")
-                await float(app, window: window, owned: true)
+                await float(app, window: window, owned: true, source: source)
                 return
             }
         }
+        UsageReporter.shared.failed("live", "new_window_timeout", ["source": source])
         log("live: no new window appeared in \(app.localizedName ?? bundleID)")
     }
 
     // MARK: Float any window
 
-    func float(_ app: NSRunningApplication, window chosen: WindowMover.Window? = nil, owned: Bool = false) async {
-        UsageReporter.shared.event("pip_started", ["mode": "live"])
-        UsageReporter.shared.once("first_pip")
-        if session != nil { await unfloat() }
-        guard permissionsGranted(prompt: true) else { return }
+    /// `source`: how floating was asked for (fixed enum, for anonymous usage).
+    func float(_ app: NSRunningApplication, window chosen: WindowMover.Window? = nil, owned: Bool = false,
+               source: String = "script") async {
+        let began = Date()
+        // Never the app's name: only whether it's one of the browsers we know.
+        let kind = Self.appKind(app)
+        if session != nil { await unfloat(how: "replaced") }
+        guard permissionsGranted(prompt: true, reportFor: source) else { return }
         guard stage.create(), await waitForStage(), let displayID = stage.displayID else {
+            UsageReporter.shared.failed("live", "stage_not_ready", ["source": source])
             log("live: stage not ready")
             return
         }
         let name = app.localizedName ?? "The app"
         guard let window = chosen ?? WindowMover.mainWindow(of: app) else {
+            UsageReporter.shared.failed("live", "no_window", ["source": source, "app_kind": kind])
             log("live: \(name) has no window to float")
             stage.destroy()
             return
@@ -169,6 +184,7 @@ final class LiveController {
             try? await Task.sleep(for: .milliseconds(900)) // let the exit animation finish
         }
         guard let original = WindowMover.frame(of: window) else {
+            UsageReporter.shared.failed("live", "frame_unreadable", ["source": source, "app_kind": kind])
             log("live: can't read \(name)'s window frame")
             stage.destroy()
             return
@@ -189,6 +205,7 @@ final class LiveController {
 
         // Never capture a window that didn't make it onto the stage.
         guard stage.bounds.contains(CGPoint(x: frame.midX, y: frame.midY)) else {
+            UsageReporter.shared.failed("live", "window_not_moved", ["source": source, "app_kind": kind, "was_fullscreen": wasFullScreen])
             log("live: \(name)'s window didn't move to the stage (it's at \(frame.integral)); giving up")
             if wasFullScreen { WindowMover.setFullScreen(window, true) }
             stage.destroy()
@@ -218,9 +235,17 @@ final class LiveController {
                                     scale: stage.screen?.backingScaleFactor ?? 2, fps: 60)
             fpsCap = 60
         } catch {
+            let ns = error as NSError
+            let declined = ns.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && ns.code == -3801
+            UsageReporter.shared.failed("live", declined ? "capture_declined" : "capture_failed", ["source": source, "app_kind": kind])
+            if !declined { UsageReporter.shared.nonFatal("live.capture", error) }
             log("live: capture failed: \(error) · screen recording preflight \(CGPreflightScreenCaptureAccess())")
             model.live?.notice = Self.explain(error)
         }
+        UsageReporter.shared.windowStarted(mode: "live", source: source, [
+            "app_kind": kind, "owned": owned, "was_fullscreen": wasFullScreen,
+            "ms": UsageCatalog.latencyBucket(ms: Date().timeIntervalSince(began) * 1000),
+        ])
         bridge.activate()
         startWatchdog()
         applyFrameRateCap()
@@ -228,9 +253,11 @@ final class LiveController {
     }
 
     /// Puts the window back where it came from and leaves live mode.
-    func unfloat() async {
+    /// `how`: why the float ended (fixed enum, for anonymous usage).
+    func unfloat(how: String = "script") async {
         guard let s = session else { return }
         session = nil
+        UsageReporter.shared.windowEnded(mode: "live", how: how, ["owned": s.owned, "used_fullscreen": s.usedFullScreen])
         bridge.deactivate()
         watchdog?.invalidate()
         await capture.stop()
@@ -332,7 +359,7 @@ final class LiveController {
             model.live?.notice = "\(s.app.localizedName ?? "The app") closed"
             Task {
                 try? await Task.sleep(for: .seconds(1.5))
-                await self.unfloat()
+                await self.unfloat(how: s.app.isTerminated ? "floated_app_quit" : "floated_window_closed")
             }
             watchdog?.invalidate()
             return
@@ -364,9 +391,11 @@ final class LiveController {
         changingFullScreen = true
         defer { changingFullScreen = false }
         bridge.release()
+        UsageReporter.shared.count("live_action", ["action": fullScreen ? "fullscreen_enter" : "fullscreen_exit"])
         if fullScreen {
             s.windowedFrame = s.frame
             s.inFullScreen = true
+            s.usedFullScreen = true
             session = s
             stage.setSize(panel.liveSurfaceSize)
             try? await Task.sleep(for: .milliseconds(350)) // the full-screen window follows the display
@@ -428,10 +457,15 @@ final class LiveController {
     /// Screen Recording granted (no prompt), for the usage report's setup step.
     static func screenRecordingGranted() -> Bool { CGPreflightScreenCaptureAccess() }
 
-    func permissionsGranted(prompt: Bool) -> Bool {
+    /// `reportFor`: a float attempt (its source) to report a permission failure for.
+    func permissionsGranted(prompt: Bool, reportFor source: String? = nil) -> Bool {
         let accessibility = WindowMover.isTrusted(prompt: prompt)
         var screen = CGPreflightScreenCaptureAccess()
         if !screen && prompt { screen = CGRequestScreenCaptureAccess() }
+        if let source, !accessibility || !screen {
+            let missing = !accessibility && !screen ? "both" : !accessibility ? "accessibility" : "screen_recording"
+            UsageReporter.shared.failed("live", "permission_denied", ["source": source, "missing": missing])
+        }
         if !accessibility || !screen {
             log("live: permissions: Accessibility \(accessibility ? "granted" : "MISSING"), Screen Recording \(screen ? "granted" : "MISSING")")
         }
@@ -454,16 +488,16 @@ final class LiveController {
             log("live: permissions \(permissionsGranted(prompt: true) ? "all granted" : "requested")")
         case "float":
             if let argument, let app = Self.findApp(argument) {
-                Task { await float(app) }
+                Task { await float(app, source: "script") }
             } else if argument == nil {
-                Task { await floatFrontmost() }
+                Task { await floatFrontmost(source: "script") }
             } else {
                 log("live: no running app matches '\(argument ?? "")'")
             }
         case "newwindow":
-            Task { await toggleNewBrowserWindow() }
+            Task { await toggleNewBrowserWindow(source: "script") }
         case "unfloat":
-            Task { await unfloat() }
+            Task { await unfloat(how: "script") }
         case "stagesize":
             let n = (argument ?? "").split(separator: ",").compactMap { Double($0) }
             if n.count == 2 { stage.setSize(CGSize(width: n[0], height: n[1])) }
@@ -503,6 +537,13 @@ final class LiveController {
             let ns = error as NSError
             log("diagnose: shareable content FAILED · \(ns.domain) \(ns.code) · \(ns.localizedDescription)")
         }
+    }
+
+    /// "browser" for the Chromium browsers and Safari/Arc we know, otherwise "app".
+    /// A fixed enum: the app's name or bundle id is never reported.
+    static func appKind(_ app: NSRunningApplication) -> String {
+        let browsers = Set(floatableBrowsers + ["com.apple.Safari", "company.thebrowser.Browser", "org.mozilla.firefox"])
+        return app.bundleIdentifier.map(browsers.contains) == true ? "browser" : "app"
     }
 
     /// By pid, bundle identifier, or app name.

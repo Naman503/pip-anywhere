@@ -168,7 +168,16 @@ cd ../extension && npm install && npm run build
 
 ### Privacy
 
-PiP Anywhere shares **anonymous usage** to see which features help: modes used (video, browser, live app), shortcut counts, setup milestones and crash types, with a random id made on first run. Never window or video titles, app names, URLs or screen content. Turn it off from the menu (**Share anonymous usage**); that also deletes what was sent. Copies started on a test port never report.
+PiP Anywhere shares **anonymous usage** to see which features help and what breaks, with a random id made on first run:
+
+- which modes are used (video, browser, live app) and how they were started and closed, with how long the window stayed open (in buckets like "5–15 min");
+- window, menu, video-control and browser-toolbar actions and shortcuts, as daily counts;
+- whether a live app is a browser or another app (never which one), and a video's resolution class (720p, 1080p…);
+- failures by category (permission missing, capture failed, page didn't load…) and crash types with our own call stack;
+- once a day, your settings (on/off values and fixed choices only), whether permissions are granted, and how many displays and web extensions you have;
+- from the browser extension, relayed by the app when you pop out a video: how pop-outs were started and stopped, and error types.
+
+Never window or video titles, app or site names, URLs, what you type, or screen content. Turn it off from the menu (**Share anonymous usage**); that also deletes what was sent, and the app then ignores what the extension counted. The extension never sends anything itself, only to the app on your Mac. Copies started on a test port never report.
 
 ### Permissions
 

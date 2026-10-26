@@ -6,6 +6,8 @@ import PiPCore
 /// a new connection replaces the previous one. Callbacks run on `queue`.
 final class MediaServer: @unchecked Sendable { // confined to `queue`
     var onConnect: (() -> Void)?
+    /// A connection from a page or extension other than ours was refused.
+    var onRejected: (() -> Void)?
     var onDisconnect: (() -> Void)?
     var onMessage: ((Inbound) -> Void)?
     var onVideo: ((VideoPacket) -> Void)?
@@ -27,11 +29,14 @@ final class MediaServer: @unchecked Sendable { // confined to `queue`
         websocket.autoReplyPing = true
         websocket.maximumMessageSize = 16 * 1024 * 1024
         let origins = allowedOrigins
-        websocket.setClientRequestHandler(queue) { _, headers in
+        websocket.setClientRequestHandler(queue) { [weak self] _, headers in
             // Browsers always send Origin; only our extension may connect.
             let origin = headers.first { $0.name.lowercased() == "origin" }?.value ?? ""
             let accepted = origins.contains(origin)
-            if !accepted { log("rejected WebSocket from origin '\(origin)'") }
+            if !accepted {
+                log("rejected WebSocket from origin '\(origin)'")
+                self?.onRejected?()
+            }
             return NWProtocolWebSocket.Response(status: accepted ? .accept : .reject, subprotocol: nil)
         }
 

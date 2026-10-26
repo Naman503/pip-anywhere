@@ -26,6 +26,7 @@ final class PlayerModel: ObservableObject {
     @Published private(set) var hud: String?
     private var hudTask: Task<Void, Never>?
     private var scrollX: CGFloat = 0
+    private var lastScrollCounted = Date.distantPast
 
     /// Sends a command to the browser tab.
     var sendCommand: (CommandAction, Double?) -> Void = { _, _ in }
@@ -41,7 +42,13 @@ final class PlayerModel: ObservableObject {
         return min(p.currentTime + elapsed, p.duration > 0 ? p.duration : .infinity)
     }
 
-    func command(_ action: CommandAction, _ value: Double? = nil) {
+    /// `via`: button, shortcut, scroll, script — counted as video_control (nil = automatic, not counted).
+    func command(_ action: CommandAction, _ value: Double? = nil, via: String? = "button") {
+        if let via {
+            var props = ["action": action.rawValue, "via": via]
+            if action == .rate, let value { props["rate"] = UsageCatalog.rateBucket(value) }
+            UsageReporter.shared.count("video_control", props)
+        }
         // Optimistic local update so the UI responds before the tab confirms.
         if var p = playback {
             let now = currentTime()
@@ -73,34 +80,37 @@ final class PlayerModel: ObservableObject {
     var volume: Double { playback?.volume ?? 1 }
     var muted: Bool { playback?.muted ?? false }
 
-    func setVolume(_ value: Double) {
+    func setVolume(_ value: Double, via: String? = "button") {
         let v = min(1, max(0, (value * 100).rounded() / 100))
-        command(.volume, v)
+        command(.volume, v, via: via)
         showHUD(v == 0 ? "Muted" : "Volume \(Int(v * 100))%")
     }
 
-    func toggleMute() {
-        command(.mute, muted ? 0 : 1)
+    func toggleMute(via: String = "button") {
+        command(.mute, muted ? 0 : 1, via: via)
         showHUD(muted ? "Muted" : "Volume \(Int(volume * 100))%")
     }
 
-    func seek(by seconds: Double) {
-        command(.seek, seconds)
+    func seek(by seconds: Double, via: String? = "button") {
+        command(.seek, seconds, via: via)
         showHUD(seconds < 0 ? "−\(Int(-seconds)) s" : "+\(Int(seconds)) s")
     }
 
     /// Two-finger scroll over the window: sideways seeks 5 s per step, up/down changes volume.
     func scroll(dx: CGFloat, dy: CGFloat, precise: Bool) {
         guard playback != nil else { return }
+        // One count per scroll gesture, not per scroll event.
+        let via: String? = Date().timeIntervalSince(lastScrollCounted) > 1.5 ? "scroll" : nil
+        defer { lastScrollCounted = Date() }
         if abs(dx) > abs(dy) {
             scrollX += precise ? dx : dx * 20
             if abs(scrollX) >= 40 {
                 // Fingers moving left (negative dx) = forward, like dragging a timeline.
-                seek(by: scrollX < 0 ? 5 : -5)
+                seek(by: scrollX < 0 ? 5 : -5, via: via)
                 scrollX = 0
             }
         } else if dy != 0 {
-            setVolume(volume + Double(precise ? dy * 0.004 : dy * 0.05))
+            setVolume(volume + Double(precise ? dy * 0.004 : dy * 0.05), via: via)
         }
     }
 }

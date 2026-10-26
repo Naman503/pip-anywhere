@@ -48,9 +48,11 @@ enum BrowserExtensions {
                 context.isInspectable = true
                 try controller.load(context)
                 let problems = ext.errors.map(\.localizedDescription)
+                UsageReporter.shared.count("browser_extension_load", ["result": problems.isEmpty ? "ok" : "ok_with_warnings"])
                 log("extensions: loaded \(ext.displayName ?? url.lastPathComponent) \(ext.version ?? "")"
                     + (problems.isEmpty ? "" : " · warnings: \(problems.joined(separator: "; "))"))
             } catch {
+                UsageReporter.shared.count("browser_extension_load", ["result": "failed"])
                 log("extensions: \(url.lastPathComponent) failed to load: \(error.localizedDescription)")
             }
         }

@@ -22,10 +22,11 @@ Only one stream is active at a time. A new connection replaces the old one.
 
 | type | fields | when |
 |---|---|---|
-| `hello` | `version`, `userAgent` | right after connecting |
+| `hello` | `version`, `ext` (extension version), `userAgent` | right after connecting |
 | `config` | `codec` (e.g. `avc1.64002A`), `width`, `height`, `description` (base64 avcC) | before the first frame, and whenever the encoder is reconfigured (crop size changed) |
 | `state` | `title`, `site`, `paused`, `currentTime`, `duration`, `rate` | on play/pause/seek/rate change, and every ~1 s while playing |
 | `stop` | `reason` | capture ended: user stopped it, the tab closed, or navigation |
+| `usage` | `items`: `[{n, p?, c, d}]` | right after connecting, if the extension counted anything: anonymous usage counts (event name, enum props, count, day). The app keeps only events and values on `UsageCatalog.extensionEvents`, and only while "Share anonymous usage" is on |
 
 ### App → extension
 

@@ -113,7 +113,14 @@ final class PanelController: NSObject, NSWindowDelegate {
 
     func toggleGhost() {
         model.ghost.toggle()
+        track(model.ghost ? "ghost_on" : "ghost_off")
         applySettings()
+    }
+
+    /// Counts a window action (fixed enum) for anonymous usage, with the current mode.
+    func track(_ action: String) {
+        let mode = model.browserActive ? "browser" : model.live != nil ? "live" : model.testPattern ? "test" : "video"
+        UsageReporter.shared.count("window_action", ["action": action, "mode": mode])
     }
 
     /// Adapts the window to the video's aspect ratio.
@@ -155,8 +162,10 @@ final class PanelController: NSObject, NSWindowDelegate {
         // Flicking the window mostly past a screen edge stashes it there; it comes back
         // to where it was before the flick.
         if let edge = PanelGeometry.stashEdge(for: panel.frame, in: visibleFrame) {
+            track("flick_stash")
             stash(edge: edge, returningTo: start.before)
         } else {
+            track("move")
             settle(animated: true)
         }
     }
@@ -191,6 +200,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func resizeEnded() {
+        if resizeStart != nil { track("resize") }
         resizeStart = nil
         settle(animated: true)
     }
@@ -269,6 +279,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Grow (> 1) or shrink (< 1) around the centre, from the keyboard.
     func scale(by factor: CGFloat) {
         guard !model.isStashed else { return }
+        track(factor > 1 ? "grow" : "shrink")
         var target = PanelGeometry.scaled(panel.frame, by: factor, aspect: aspect, maxSize: screenFrame.size)
         // Growing around the centre would push a corner-parked window off-screen;
         // a window that was fully visible stays fully visible.
@@ -282,6 +293,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// width), and back to exactly where it was.
     func toggleZoom() {
         guard !model.isStashed, !freeShape else { return }
+        track(unzoomedFrame == nil ? "zoom" : "unzoom")
         if let previous = unzoomedFrame {
             unzoomedFrame = nil
             move(to: previous, animated: true)
@@ -297,6 +309,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     /// Menu size presets, keeping the window's nearest corner in place.
     func setWidth(_ width: CGFloat) {
         guard !model.isStashed else { return }
+        track("size_preset")
         unzoomedFrame = nil
         var target = PanelGeometry.sized(panel.frame, width: width, aspect: aspect, in: screenFrame)
         if screenFrame.contains(panel.frame) { target = PanelGeometry.clamped(target, in: screenFrame) }
@@ -314,6 +327,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func move(to corner: ScreenCorner) {
+        track("corner")
         if model.isStashed { leaveStash() }
         unzoomedFrame = nil
         let target = PanelGeometry.cornered(panel.frame, corner, in: visibleFrame)
@@ -322,6 +336,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     }
 
     func magnifyEnded() {
+        if magnifyStart != nil { track("pinch") }
         magnifyStart = nil
         if !model.isStashed { settle(animated: true) }
     }
@@ -367,6 +382,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     // MARK: Stash
 
     func toggleStash() {
+        track(model.isStashed ? "unstash" : "stash")
         if model.isStashed { unstash() } else { stash(edge: PanelGeometry.nearestEdge(of: panel.frame, in: visibleFrame)) }
     }
 
@@ -377,8 +393,8 @@ final class PanelController: NSObject, NSWindowDelegate {
         if !model.isStashed {
             restingFrame = origin ?? panel.frame
             unzoomedFrame = nil
-            if Settings.pauseWhenStashed { model.command(.pause) }
-            if Settings.muteWhenStashed { model.command(.mute, 1) }
+            if Settings.pauseWhenStashed { model.command(.pause, via: nil) }
+            if Settings.muteWhenStashed { model.command(.mute, 1, via: nil) }
         }
         let resting = restingFrame ?? panel.frame
         model.stashEdge = edge
@@ -398,8 +414,8 @@ final class PanelController: NSObject, NSWindowDelegate {
     private func leaveStash() {
         model.isStashed = false
         restingFrame = nil
-        if Settings.pauseWhenStashed { model.command(.play) }
-        if Settings.muteWhenStashed { model.command(.mute, 0) }
+        if Settings.pauseWhenStashed { model.command(.play, via: nil) }
+        if Settings.muteWhenStashed { model.command(.mute, 0, via: nil) }
     }
 
     // MARK: Scroll
@@ -417,6 +433,7 @@ final class PanelController: NSObject, NSWindowDelegate {
     // MARK: Helpers
 
     private func screensChanged() {
+        if panel.isVisible { UsageReporter.shared.count("screens_changed") }
         if model.isStashed { stash(edge: model.stashEdge) } else { settle(animated: false) }
     }
 

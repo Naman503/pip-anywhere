@@ -1,6 +1,8 @@
 // Shared types: messages between the extension's contexts, and the app wire
 // protocol (docs/protocol.md).
 
+import type { UsageItem } from './usage';
+
 export const DEFAULT_APP_PORT = 47823;
 export const appUrl = (port = DEFAULT_APP_PORT) => `ws://127.0.0.1:${port}/`;
 
@@ -44,12 +46,15 @@ export type ExtMessage =
   | { type: 'pip:rect'; rect: VideoRect }
   | { type: 'pip:state'; state: PlaybackState }
   // service worker → offscreen
-  | { type: 'pip:start'; target: 'offscreen'; streamId: string; tabId: number; rect: VideoRect; port: number }
+  | { type: 'pip:start'; target: 'offscreen'; streamId: string; tabId: number; rect: VideoRect; port: number; usage: UsageItem[] }
   | { type: 'pip:stop'; target: 'offscreen'; reason: string }
   // offscreen → service worker
   | { type: 'pip:app-command'; action: CommandAction; value?: number }
   | { type: 'pip:ended'; reason: string }
-  | { type: 'pip:error'; message: string };
+  | { type: 'pip:error'; message: string }
+  // offscreen → service worker: anonymous usage (see usage.ts)
+  | { type: 'pip:usage'; n: string; p?: Record<string, string> }
+  | { type: 'pip:usage-sent'; items: UsageItem[] };
 
 /** App → extension (JSON text frames). */
 export type AppMessage =

@@ -64,6 +64,7 @@ final class AdBlocker {
                 let (data, response) = try await URLSession.shared.data(from: url)
                 if (response as? HTTPURLResponse)?.statusCode == 200 { try data.write(to: file) }
             } catch {
+                UsageReporter.shared.count("adblock_error", ["kind": "download_failed"])
                 log("adblock: download of \(url.lastPathComponent) failed: \(error.localizedDescription); using the saved copy")
             }
             if let text = try? String(contentsOf: file, encoding: .utf8) { texts.append(text) }
@@ -81,6 +82,8 @@ final class AdBlocker {
                     lists.append(list)
                 }
             } catch {
+                UsageReporter.shared.count("adblock_error", ["kind": "compile_failed"])
+                UsageReporter.shared.nonFatal("adblock.compile", error)
                 log("adblock: compiling \(id) failed: \(error)")
             }
         }
